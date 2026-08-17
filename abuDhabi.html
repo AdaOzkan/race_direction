@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rayfelmun'26 FIA Control Panel</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<!-- Firebase Realtime Database - used for live sync between screens on GitHub Pages -->
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@500;600;700&display=swap');
+
+@font-face {
+  font-family: 'KHInterference';
+  src: url('./fonts/KHInterferenceTRIAL-Regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'F1Bold';
+  src: url('./fonts/Formula1-Bold_web.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'F1Regular';
+  src: url('./fonts/Formula1-Regular-1.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+.pos-font { font-family: 'KHInterference', 'Orbitron', sans-serif; }
+.driver-font { font-family: 'F1Bold', 'Rajdhani', sans-serif; }
+.tel-font { font-family: 'F1Regular', 'Rajdhani', sans-serif; }
+
+:root {
+  --f1-red: #ff0000; 
+  --safety-yellow: #ffd000; 
+  --safety-green: #00d21d;
+  --soft-red: #ff0000; 
+  --medium-yellow: #f9d71c; 
+  --hard-white: #ffffff;
+}
+
+body, html {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #040406;
+  color: #ffffff;
+  font-family: 'Rajdhani', sans-serif;
+}
+
+.f1b { font-family: 'Orbitron', sans-serif; font-weight: 900; }
+.f1r { font-family: 'Orbitron', sans-serif; font-weight: 400; }
+
+@keyframes blinky {
+  0%, 100% { background-color: #000000; color: var(--safety-yellow); }
+  50% { background-color: var(--safety-yellow); color: #000000; }
+}
+.blink-y { animation: blinky 1s infinite; }
+
+@keyframes blinkr {
+  0%, 100% { background-color: #000000; color: var(--f1-red); }
+  50% { background-color: var(--f1-red); color: #ffffff; }
+}
+.blink-r { animation: blinkr 1s infinite; }
+
+@keyframes pulse2 {
+  0% { opacity: 1; }
+  50% { opacity: 0.35; }
+  100% { opacity: 1; }
+}
+.pulse2 { animation: pulse2 0.8s infinite; }
+
+@keyframes trackRedPulse {
+  0%, 100% { stroke: #ff0000; filter: drop-shadow(0 0 10px #ff0000); }
+  50% { stroke: #550000; filter: none; }
+}
+@keyframes trackYellowPulse {
+  0%, 100% { stroke: #ffd000; filter: drop-shadow(0 0 10px #ffd000); }
+  50% { stroke: #6b5700; filter: none; }
+}
+@keyframes trackVSCFlash {
+  0%, 49% { stroke: #ffd000; filter: drop-shadow(0 0 10px #ffd000); }
+  50%, 100% { stroke: transparent; filter: none; }
+}
+
+.track-red-flag { animation: trackRedPulse 1.5s infinite; }
+.track-sc { animation: trackYellowPulse 1.5s infinite; }
+.track-vsc { animation: trackVSCFlash 0.8s infinite; }
+.track-sector-yellow { animation: trackYellowPulse 1s infinite; }
+
+@keyframes pitFrozen {
+  0%, 100% { filter: drop-shadow(0 0 4px #38bdf8); }
+  50% { filter: drop-shadow(0 0 9px #38bdf8); }
+}
+.pit-frozen { animation: pitFrozen 0.9s infinite; }
+
+@keyframes fastestLapGlow {
+  0%, 100% { box-shadow: 0 0 4px #b026ff; }
+  50% { box-shadow: 0 0 9px #d68bff; }
+}
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: #09090b; }
+::-webkit-scrollbar-thumb { background: #27272a; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--f1-red); }
+select, input, button { font-family: 'Rajdhani', sans-serif; }
+
+.f1-tire {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    font-family: 'F1Regular', 'Rajdhani', sans-serif;
+    font-size: 13px;
+    font-weight: 900;
+    box-sizing: border-box;
+    user-select: none;
+}
+.f1-tire.soft { color: #ff2b2b; }
+.f1-tire.medium { color: #ffd100; }
+.f1-tire.hard { color: #ffffff; }
+
+.pit-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  background: #00d21d;
+  color: #000;
+  font-family: 'F1Bold', 'Rajdhani', sans-serif;
+  font-weight: 900;
+  font-size: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.penalty-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  height: 15px;
+  background: #ff0000;
+  color: #fff;
+  font-family: 'F1Bold', 'Rajdhani', sans-serif;
+  font-weight: 900;
+  font-size: 9px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.fastest-lap-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  background: #b026ff;
+  color: #fff;
+  font-size: 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  animation: fastestLapGlow 1.2s infinite;
+}
+
+.checkered-badge {
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #000 25%, transparent 25%, transparent 75%, #000 75%, #000),
+    linear-gradient(45deg, #000 25%, transparent 25%, transparent 75%, #000 75%, #000);
+  background-size: 7.5px 7.5px;
+  background-position: 0 0, 3.75px 3.75px;
+}
+
+.team-logo {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+@media (max-width: 639px) {
+  #start-lights { padding: 0.5rem; gap: 0.4rem; }
+  #start-lights .w-8 { width: 1.4rem; height: 1.4rem; }
+}
+</style>
+</head>
+<body class="min-h-screen flex flex-col bg-neutral-950 text-neutral-100 selection:bg-red-600 selection:text-white">
+
+<div id="login-screen" class="fixed inset-0 bg-black/95 z-50 flex flex-col items-center justify-center p-4">
+  <div class="max-w-3xl w-full bg-neutral-900 border border-neutral-800 rounded-lg p-6 md:p-8 shadow-2xl text-center">
+    <div class="flex justify-center mb-4">
+      <div class="f1b text-4xl text-white tracking-widest italic flex items-center">F1<span class="text-red-600">MUN</span><span class="text-xs bg-red-600 text-white px-2 py-0.5 ml-2 rounded not-italic tracking-normal">NACO GP</span></div>
+    </div>
+    <h2 class="text-xl font-bold tracking-wider text-white mb-1 uppercase">COMMITTEE SIMULATION - SECURE ACCESS PANEL</h2>
+    <p class="text-neutral-400 text-sm mb-1">Please connect to the pit wall using your assigned access code.</p>
+    <p class="text-neutral-600 text-[11px] mb-6">All participants' screens display the same race synchronized in near real-time.</p>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
+      <input type="password" id="access-code-input" placeholder="ACCESS CODE" class="md:col-span-2 bg-black border border-neutral-700 text-white text-center py-3 px-4 rounded focus:outline-none focus:ring-2 focus:ring-red-600 text-lg tracking-widest uppercase font-mono">
+      <button onclick="handleLogin()" class="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-4 rounded transition-all duration-300 tracking-wider text-xs uppercase">CONNECT TO SYSTEM</button>
+    </div>
+    <div class="mt-4 pt-4 border-t border-neutral-800 text-left max-h-[220px] overflow-y-auto pr-1">
+      <span class="text-xs text-neutral-500 font-bold uppercase tracking-wider block mb-2">All Access Codes Defined in the System:</span>
+      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 text-[11px] text-neutral-400">
+        <div class="border-b border-neutral-800/40 pb-1 col-span-full font-bold text-neutral-500 uppercase">SPECIAL ADMINISTRATORS:</div>
+        <div>🔴 Race Director: <code class="bg-black px-1 py-0.5 rounded text-red-400 font-mono">RUI-RD</code></div>
+        <div>👑 USG/Chair: <code class="bg-black px-1 py-0.5 rounded text-yellow-400 font-mono">CHAIR</code></div>
+        <div>📺 LIVE: <code class="bg-black px-1 py-0.5 rounded text-sky-400 font-mono">PRO-TV</code></div>
+        <div class="border-b border-neutral-800/40 pt-1 pb-1 col-span-full font-bold text-neutral-500 uppercase">TEAM PRINCIPALS:</div>
+        <div>🏎️ Ferrari Principal: <code class="bg-black px-1 rounded text-red-500 font-mono">FER-TP</code></div>
+        <div>🏎️ Red Bull Principal: <code class="bg-black px-1 rounded text-blue-400 font-mono">RBR-TP</code></div>
+        <div>🏎️ Mercedes Principal: <code class="bg-black px-1 rounded text-teal-400 font-mono">MER-TP</code></div>
+        <div>🏎️ McLaren Principal: <code class="bg-black px-1 rounded text-orange-400 font-mono">MCL-TP</code></div>
+        <div>🏎️ Aston Martin Principal: <code class="bg-black px-1 rounded text-emerald-500 font-mono">AMR-TP</code></div>
+        <div>🏎️ Williams Principal: <code class="bg-black px-1 rounded text-blue-300 font-mono">WIL-TP</code></div>
+        <div>🏎️ Alpine Principal: <code class="bg-black px-1 rounded text-sky-500 font-mono">ALP-TP</code></div>
+        <div>🏎️ VCARB Principal: <code class="bg-black px-1 rounded text-indigo-400 font-mono">VCARB-TP</code></div>
+        <div>🏎️ Audi Sauber Principal: <code class="bg-black px-1 rounded text-green-400 font-mono">KOP-TP</code></div>
+        <div>🏎️ Haas Principal: <code class="bg-black px-1 rounded text-gray-400 font-mono">HAS-TP</code></div>
+        <div class="border-b border-neutral-800/40 pt-1 pb-1 col-span-full font-bold text-neutral-500 uppercase">STEWARDS:</div>
+        <div>⚖️ Steward G. Connelly: <code class="bg-black px-1 rounded font-mono">STW-GARRY</code></div>
+        <div>⚖️ Steward D. Warwick: <code class="bg-black px-1 rounded font-mono">STW-DEREK</code></div>
+        <div>⚖️ Steward J. Abed: <code class="bg-black px-1 rounded font-mono">STW-JOSE</code></div>
+        <div>⚖️ Steward S. Bellot: <code class="bg-black px-1 rounded font-mono">STW-SILVIA</code></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<header class="bg-neutral-950 border-b border-neutral-900 py-3 px-4 sm:px-6 flex flex-wrap justify-between items-center z-10 shrink-0 gap-y-2">
+  <div class="flex items-center space-x-3 sm:space-x-4">
+    <span class="f1b text-xl sm:text-2xl tracking-widest text-white italic">F1<span class="text-red-600">MUN</span></span>
+    <div class="h-6 w-[1px] bg-neutral-800 hidden sm:block"></div>
+    <div id="role-badge" class="bg-red-600/10 border border-red-600/30 text-red-500 text-[10px] sm:text-xs px-2 sm:px-3 py-1 rounded font-bold uppercase tracking-wider">Loading...</div>
+  </div>
+  <div class="flex items-center flex-wrap gap-3 sm:gap-6 my-1 sm:my-0">
+    <div class="flex items-center space-x-2">
+      <span class="text-neutral-500 text-[10px] sm:text-xs font-bold uppercase">LAP:</span>
+      <span id="lap-counter" class="f1b text-white text-base sm:text-lg tel-font">0 / 78</span>
+    </div>
+    <div class="h-6 w-[1px] bg-neutral-800 hidden sm:block"></div>
+    <div id="status-flag-pill" class="px-3 sm:px-4 py-1 rounded font-bold tracking-widest text-[10px] sm:text-xs uppercase transition-all duration-300 bg-emerald-600 text-white">GREEN FLAG</div>
+    <div class="h-6 w-[1px] bg-neutral-800 hidden sm:block"></div>
+    <div id="sync-status" class="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-neutral-500">SYNCHRONIZING...</div>
+  </div>
+  <button onclick="logout()" class="text-neutral-400 hover:text-red-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors">SECURE LOGOUT</button>
+</header>
+
+<main class="flex-1 grid grid-cols-1 xl:grid-cols-12 overflow-y-auto xl:overflow-hidden h-full">
+  <div class="xl:col-span-7 flex flex-col sm:flex-row relative bg-neutral-950/60 p-4 border-r border-neutral-900 overflow-visible xl:overflow-hidden min-h-0 gap-4 sm:gap-0">
+    <div id="start-lights" class="absolute top-4 left-1/2 -translate-x-1/2 hidden grid-cols-5 gap-2 sm:gap-3 bg-neutral-900/95 border-2 border-neutral-800 p-2.5 sm:p-4 rounded shadow-2xl z-30">
+      <div class="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-red-950 border border-neutral-800 transition-colors duration-300" id="l1"></div>
+      <div class="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-red-950 border border-neutral-800 transition-colors duration-300" id="l2"></div>
+      <div class="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-red-950 border border-neutral-800 transition-colors duration-300" id="l3"></div>
+      <div class="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-red-950 border border-neutral-800 transition-colors duration-300" id="l4"></div>
+      <div class="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-red-950 border border-neutral-800 transition-colors duration-300" id="l5"></div>
+    </div>
+
+    <div id="leaderboard-wrapper" class="w-full sm:w-[210px] h-[280px] sm:h-full flex flex-col shrink-0 bg-black/95 border border-neutral-800 rounded overflow-hidden z-10 relative">
+      <div id="dynamic-stripe" class="absolute left-0 top-0 w-1 h-0 transition-all duration-500 z-20"></div>
+      <div class="bg-neutral-900 border-b border-neutral-800 py-3 flex justify-center items-center">
+        <span class="f1b text-sm text-red-600">F1</span>
+      </div>
+      <div id="flag-panel" class="h-0 overflow-hidden transition-all duration-300 flex flex-col bg-neutral-900 text-center">
+        <div class="py-1.5 text-xs font-bold uppercase tracking-widest text-black" id="f-title"></div>
+        <div class="py-1 text-[10px] font-bold text-neutral-400 bg-black/40" id="f-content"></div>
+      </div>
+      <div class="flex-grow overflow-y-auto" id="ui-grid"></div>
+    </div>
+
+    <div id="track-container" class="flex-1 flex flex-col items-center justify-center relative p-2 sm:p-4 select-none min-w-0">
+      <div class="absolute top-4 right-4 bg-neutral-900/60 border border-neutral-800/80 rounded p-2 text-[10px] font-bold text-neutral-400 z-10 hidden sm:block">📍 TELEMETRY TRACK MAP</div>
+      <svg id="monaco-svg" viewBox="0 0 280 280" class="w-full max-h-[50vh] sm:max-h-[85vh] text-neutral-800 filter drop-shadow-[0_0_15px_rgba(0,0,0,0.5)]">
+        <path id="main-track" class="fill-none stroke-neutral-800 stroke-[8] stroke-linejoin-round stroke-linecap-round" d="M123.44,120.56c.59,4.63,1.36,10.57,2,15.66s1.2,9.49,1.88,14.86,1.65,13.45,2.16,17.38.37,4.72.89,6.19a3.8,3.8,0,0,0,2.23,2.62c1.1.48,1.85.54,4.39.21s7.37-1.46,10.85-2.19,7.55-1.67,10.05-2.24a38.08,38.08,0,0,0,4.95-1.12,6.77,6.77,0,0,0,3-2,14.53,14.53,0,0,0,2.35-4.13c.81-2,1.6-5.38,2.57-7.76s1.59-4.61,3.24-6.57a22.13,22.13,0,0,1,6.68-5.26,15.18,15.18,0,0,1,7.51-1.61c2.8.1,6.17,1.4,9.33,2.19s6.43,2,9.64,2.56a47.76,47.76,0,0,0,9.65.58c3.64-.1,7.93-.72,12.22-1.15s9.36-1,13.48-1.42,8.32-.72,11.25-1.22,5-.89,6.33-1.83a3.73,3.73,0,0,0,1.85-3.8c-.35-1.41-1-3.18-3.92-4.66s-8.2-2.32-13.77-4.17-12-4.17-19.66-6.88-17.82-6.35-26.29-9.4-16.12-6-24.55-8.92-19-6.26-26.1-8.59-10.89-3.55-16.3-5.39-12-4.25-16.13-5.66-6.51-2.25-8.47-2.78-2.74-.75-3.35-.38-.29,1.56-.28,2.61.31,2.69.34,3.73.44,1.85-.21,2.47-1.48.64-3.69,1.26S93.18,95.14,90,96.21a45.47,45.47,0,0,0-9.62,4A48.15,48.15,0,0,0,70.22,108c-4,3.93-9.58,10.84-13.78,15.8s-7.86,9.46-11.37,14a156.82,156.82,0,0,0-9.66,13.1c-2.95,4.69-5.47,10-8,15s-5.68,11.89-7.24,15.36S18,184.79,18,186.71a11.11,11.11,0,0,0,1.92,6.09,8.78,8.78,0,0,0,5.13,3.41,17.48,17.48,0,0,0,8.35-.49A11.77,11.77,0,0,0,38.89,191c1.18-1.93,1.11-3.51,1.6-6.82s.84-8.62,1.32-13,.5-9.72,1.59-13.43,3.14-5.95,5-8.79,3.94-6.56,6-8.24,3.92-1.24,6.16-1.79,5.6-1.14,7.3-1.48a17.2,17.2,0,0,1,2.9-.49,2.26,2.26,0,0,1,1.59.45,3.88,3.88,0,0,1,.94,1.56,6.17,6.17,0,0,1,.45,2c.14,1.22.18,3.79.41,5.35a18.35,18.35,0,0,0,1,4,4.07,4.07,0,0,0,1.51,2,6.21,6.21,0,0,0,2.76,1.15,34.94,34.94,0,0,0,5,.35,34.83,34.83,0,0,0,5-.15c1.25-.2,1.73,0,2.46-1a8.6,8.6,0,0,0,1.9-4.9,66.69,66.69,0,0,0-.44-11c-.44-4.63-1.94-12.65-2.2-16.73s0-5.9.6-7.74,1.42-2.19,2.79-3.27a52.77,52.77,0,0,1,5.46-3.14c2.68-1.52,7.81-4.74,10.61-6a16.6,16.6,0,0,1,6.18-1.39c1.55-.13,2.36-.17,3.12.6s1.07,2.46,1.43,4,.32,2.53.7,5.46.95,7.49,1.54,12.12z" />
+        <path id="sector-overlay" class="fill-none stroke-transparent stroke-[5] stroke-linejoin-round stroke-linecap-round transition-all duration-300" d="M123.44,120.56c.59,4.63,1.36,10.57,2,15.66s1.2,9.49,1.88,14.86,1.65,13.45,2.16,17.38.37,4.72.89,6.19a3.8,3.8,0,0,0,2.23,2.62c1.1.48,1.85.54,4.39.21s7.37-1.46,10.85-2.19,7.55-1.67,10.05-2.24a38.08,38.08,0,0,0,4.95-1.12,6.77,6.77,0,0,0,3-2,14.53,14.53,0,0,0,2.35-4.13c.81-2,1.6-5.38,2.57-7.76s1.59-4.61,3.24-6.57a22.13,22.13,0,0,1,6.68-5.26,15.18,15.18,0,0,1,7.51-1.61c2.8.1,6.17,1.4,9.33,2.19s6.43,2,9.64,2.56a47.76,47.76,0,0,0,9.65.58c3.64-.1,7.93-.72,12.22-1.15s9.36-1,13.48-1.42,8.32-.72,11.25-1.22,5-.89,6.33-1.83a3.73,3.73,0,0,0,1.85-3.8c-.35-1.41-1-3.18-3.92-4.66s-8.2-2.32-13.77-4.17-12-4.17-19.66-6.88-17.82-6.35-26.29-9.4-16.12-6-24.55-8.92-19-6.26-26.1-8.59-10.89-3.55-16.3-5.39-12-4.25-16.13-5.66-6.51-2.25-8.47-2.78-2.74-.75-3.35-.38-.29,1.56-.28,2.61.31,2.69.34,3.73.44,1.85-.21,2.47-1.48.64-3.69,1.26S93.18,95.14,90,96.21a45.47,45.47,0,0,0-9.62,4A48.15,48.15,0,0,0,70.22,108c-4,3.93-9.58,10.84-13.78,15.8s-7.86,9.46-11.37,14a156.82,156.82,0,0,0-9.66,13.1c-2.95,4.69-5.47,10-8,15s-5.68,11.89-7.24,15.36S18,184.79,18,186.71a11.11,11.11,0,0,0,1.92,6.09,8.78,8.78,0,0,0,5.13,3.41,17.48,17.48,0,0,0,8.35-.49A11.77,11.77,0,0,0,38.89,191c1.18-1.93,1.11-3.51,1.6-6.82s.84-8.62,1.32-13,.5-9.72,1.59-13.43,3.14-5.95,5-8.79,3.94-6.56,6-8.24,3.92-1.24,6.16-1.79,5.6-1.14,7.3-1.48a17.2,17.2,0,0,1,2.9-.49,2.26,2.26,0,0,1,1.59.45,3.88,3.88,0,0,1,.94,1.56,6.17,6.17,0,0,1,.45,2c.14,1.22.18,3.79.41,5.35a18.35,18.35,0,0,0,1,4,4.07,4.07,0,0,0,1.51,2,6.21,6.21,0,0,0,2.76,1.15,34.94,34.94,0,0,0,5,.35,34.83,34.83,0,0,0,5-.15c1.25-.2,1.73,0,2.46-1a8.6,8.6,0,0,0,1.9-4.9,66.69,66.69,0,0,0-.44-11c-.44-4.63-1.94-12.65-2.2-16.73s0-5.9.6-7.74,1.42-2.19,2.79-3.27a52.77,52.77,0,0,1,5.46-3.14c2.68-1.52,7.81-4.74,10.61-6a16.6,16.6,0,0,1,6.18-1.39c1.55-.13,2.36-.17,3.12.6s1.07,2.46,1.43,4,.32,2.53.7,5.46.95,7.49,1.54,12.12z" />
+        <g id="car-layer"></g>
+      </svg>
+      <div id="penalty-overlay" class="absolute bottom-6 left-1/2 -translate-x-1/2 w-[92%] sm:w-full max-w-2xl bg-black/95 border-2 border-red-600 rounded-lg p-3 sm:p-4 flex items-center justify-between shadow-2xl z-40 hidden">
+        <div class="flex items-center space-x-3 sm:space-x-4">
+          <div class="bg-red-600/15 p-2 rounded"><span class="text-red-500 font-black text-2xl sm:text-3xl">⚠️</span></div>
+          <div>
+            <span class="text-red-600 f1b text-xs tracking-widest block" id="po-title">INCIDENT</span>
+            <div class="flex items-baseline space-x-1">
+              <span class="text-white text-base sm:text-lg" id="po-name">-</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="xl:col-span-5 flex flex-col h-auto xl:h-full bg-neutral-900/40 overflow-visible xl:overflow-y-auto p-4 space-y-4">
+    <div class="bg-black/85 border border-neutral-900 rounded p-4">
+      <div class="flex justify-between items-center mb-2">
+        <span class="f1b text-xs tracking-widest text-neutral-400 uppercase">LIVE TELEMETRY (22 DRIVERS)</span>
+        <span class="text-[9px] bg-red-600/10 border border-red-600/30 text-red-500 px-2 py-0.5 rounded font-bold uppercase">LIVE</span>
+      </div>
+      <div class="overflow-x-auto max-h-[190px]">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="border-b border-neutral-800 text-[10px] text-neutral-500 uppercase font-bold tracking-wider">
+              <th class="pb-1">POS</th><th class="pb-1">DRIVER</th><th class="pb-1 text-center">TIRE</th><th class="pb-1 text-right">GAP</th><th class="pb-1 text-right">WEAR</th><th class="pb-1 text-right">STATUS</th>
+            </tr>
+          </thead>
+          <tbody id="leaderboard-body" class="text-xs font-bold tracking-wide"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="bg-black/85 border border-neutral-900 rounded p-4 flex flex-col h-[220px]">
+      <div class="flex justify-between items-center mb-2">
+        <span class="f1b text-xs tracking-widest text-neutral-400 uppercase">RADIO & STRATEGY ROOM</span>
+        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+      </div>
+      <div id="chat-messages" class="flex-1 overflow-y-auto space-y-2 p-2 bg-neutral-950/80 rounded border border-neutral-900 text-xs font-mono"></div>
+      <div class="mt-2 flex space-x-2">
+        <input type="text" id="chat-input" placeholder="Radio message or committee directive..." class="flex-1 bg-black border border-neutral-800 rounded px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-red-600 text-neutral-100">
+        <button onclick="sendChatMessage()" class="bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-2 rounded text-xs uppercase tracking-wider">SEND</button>
+      </div>
+    </div>
+
+    <div id="workspace-container" class="bg-black/85 border border-neutral-900 rounded p-4 flex-1">
+      <div class="text-center py-8 text-neutral-500 font-bold uppercase tracking-widest text-xs">Please connect to the pit wall with an access code...</div>
+    </div>
+  </div>
+</main>
+
+<footer class="bg-neutral-950 border-t border-neutral-900 py-3 px-4 sm:px-6 flex flex-col sm:flex-row justify-between items-center text-[10px] text-neutral-500 uppercase font-bold tracking-wider shrink-0 gap-1 sm:gap-0">
+  <div>F1 2026 MUN COGNITIVE SYSTEMS &copy; COMMITTEE ADVISOR</div>
+  <div class="flex items-center space-x-2"><span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500"></span><span>SIMULATION ACTIVE</span></div>
+</footer>
+
+<div id="custom-modal" class="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 hidden">
+  <div class="max-w-md w-full bg-neutral-950 border-2 border-yellow-500 rounded-lg p-6 text-center shadow-2xl relative">
+    <span id="modal-title" class="f1b text-lg tracking-widest text-yellow-500 uppercase block mb-3">RACE INCIDENT</span>
+    <div class="max-h-[300px] overflow-y-auto text-left mb-6 pr-1 font-mono text-xs"><p id="modal-body" class="text-neutral-200 leading-relaxed"></p></div>
+    <button onclick="closeModal()" class="w-full bg-neutral-900 hover:bg-neutral-800 border border-yellow-500/30 text-white font-bold py-2 px-4 rounded transition-all uppercase text-xs tracking-wider">UNDERSTOOD</button>
+  </div>
+</div>
+
+<script>
+// ================= DRIVERS =================
+const drivers = [
+  {abbr:'ANT', color:'#27f4d2', tire:'S', team:'MER', fname:'Kimi', lname:'ANTONELLI', number: 12, skill: 1.10},
+  {abbr:'HAM', color:'#e80020', tire:'S', team:'FER', fname:'Lewis', lname:'HAMILTON', number: 44, skill: 1.06},
+  {abbr:'RUS', color:'#27f4d2', tire:'H', team:'MER', fname:'George', lname:'RUSSELL', number: 63, skill: 1.05},
+  {abbr:'LEC', color:'#e80020', tire:'S', team:'FER', fname:'Charles', lname:'LECLERC', number: 16, skill: 1.04},
+  {abbr:'NOR', color:'#ff8000', tire:'M', team:'MCL', fname:'Lando', lname:'NORRIS', number: 1, skill: 1.03},
+  {abbr:'VER', color:'#3671C6', tire:'H', team:'RBR', fname:'Max', lname:'VERSTAPPEN', number: 3, skill: 1.02},
+  {abbr:'PIA', color:'#ff8000', tire:'M', team:'MCL', fname:'Oscar', lname:'PIASTRI', number: 81, skill: 1.00},
+  {abbr:'HAD', color:'#3671C6', tire:'S', team:'RBR', fname:'Isack', lname:'HADJAR', number: 6, skill: 0.98},
+  {abbr:'LAW', color:'#6692ff', tire:'M', team:'VCARB', fname:'Liam', lname:'LAWSON', number: 30, skill: 0.97},
+  {abbr:'GAS', color:'#0093cc', tire:'S', team:'ALP', fname:'Pierre', lname:'GASLY', number: 10, skill: 0.97},
+  {abbr:'LIN', color:'#6692ff', tire:'S', team:'VCARB', fname:'Arvid', lname:'LINDBLAD', number: 41, skill: 0.95},
+  {abbr:'COL', color:'#0093cc', tire:'M', team:'ALP', fname:'Franco', lname:'COLAPINTO', number: 43, skill: 0.95},
+  {abbr:'BEA', color:'#b6babd', tire:'H', team:'HAS', fname:'Oliver', lname:'BEARMAN', number: 87, skill: 0.94},
+  {abbr:'BOR', color:'#52e252', tire:'S', team:'AUD', fname:'Gabriel', lname:'BORTOLETO', number: 5, skill: 0.93},
+  {abbr:'SAI', color:'#00a0de', tire:'H', team:'WIL', fname:'Carlos', lname:'SAINZ', number: 55, skill: 0.93},
+  {abbr:'ALB', color:'#00a0de', tire:'H', team:'WIL', fname:'Alexander', lname:'ALBON', number: 23, skill: 0.92},
+  {abbr:'OCO', color:'#b6babd', tire:'M', team:'HAS', fname:'Esteban', lname:'OCON', number: 31, skill: 0.91},
+  {abbr:'HUL', color:'#52e252', tire:'H', team:'AUD', fname:'Nico', lname:'HULKENBERG', number: 27, skill: 0.91},
+  {abbr:'ALO', color:'#229971', tire:'M', team:'AMR', fname:'Fernando', lname:'ALONSO', number: 14, skill: 0.90},
+  {abbr:'STR', color:'#229971', tire:'S', team:'AMR', fname:'Lance', lname:'STROLL', number: 18, skill: 0.86},
+  {abbr:'BOT', color:'#1e3d59', tire:'H', team:'CAD', fname:'Valtteri', lname:'BOTTAS', number: 77, skill: 0.88},
+  {abbr:'PER', color:'#1e3d59', tire:'M', team:'CAD', fname:'Sergio', lname:'PEREZ', number: 11, skill: 0.88}
+];
+
+const TEAMS = {
+  FER:{name:'Scuderia Ferrari HP',color:'#e80020'}, RBR:{name:'Red Bull Racing',color:'#3671C6'},
+  MER:{name:'Mercedes AMG F1',color:'#27F4D2'}, MCL:{name:'McLaren Racing',color:'#FF8000'},
+  AMR:{name:'Aston Martin F1',color:'#229971'}, ALP:{name:'Alpine F1 Team',color:'#0093CC'},
+  WIL:{name:'Williams Racing',color:'#00a0de'}, VCARB:{name:'Racing Bulls F1',color:'#6692ff'},
+  AUD:{name:'Audi F1 (Sauber)',color:'#52e252'}, HAS:{name:'Haas F1 Team',color:'#B6BABD'},CAD:{name:"Cadillac F1 Team",color:"#aaaaad"}
+};
+
+const TEAM_LOGOS = {
+  FER: 'sources/2026ferrarilogowhite.avif',
+  RBR: 'sources/2026redbullracinglogowhite.avif',
+  MER: 'sources/2026mercedeslogowhite.avif',
+  MCL: 'sources/2026mclarenlogowhite.avif',
+  AMR: 'sources/2026astonmartinlogowhite.avif',
+  ALP: 'sources/2026alpinelogowhite.avif',
+  WIL: 'sources/2026williamslogowhite.avif',
+  VCARB: 'sources/2026racingbullslogowhite.avif',
+  AUD: 'sources/2026audilogowhite.avif',
+  HAS: 'sources/2026haasf1teamlogowhite.avif',
+  CAD: 'sources/2026cadillaclogowhite.avif'
+};
+
+function teamLogoTag(d, sizeClass){
+  const src = TEAM_LOGOS[d.team] || '';
+  const cls = 'team-logo ' + (sizeClass||'');
+  return `<img src="${src}" class="${cls}" alt="${d.team}" onerror="this.style.visibility='hidden'">`;
+}
+
+const STEWARDS = {GARRY:'Garry Connelly',DEREK:'Derek Warwick',JOSE:'José Abed',SILVIA:'Silvia Bellot'};
+
+const TIRE_DATA = {
+  S: { speedMult: 1.045, wearRate: 0.60 },
+  M: { speedMult: 1.000, wearRate: 0.35 },
+  H: { speedMult: 0.965, wearRate: 0.20 }
+};
+
+// ================= STATE =================
+const LAP_SECONDS = 72;        
+const TICK_MS = 150;          
+const TICKS_PER_LAP = LAP_SECONDS * 1000 / TICK_MS; 
+const UNIT = 1 / TICKS_PER_LAP;
+
+function gridStartProgress(i, total){
+  const spread = 0.03; 
+  const denom = Math.max(1, total - 1);
+  return 0.01 + ((total - 1 - i) / denom) * spread;
+}
+
+function freshDrivers(){
+  return drivers.map((d,i)=>{
+    const startProgress = gridStartProgress(i, drivers.length);
+    return {...d, progress: startProgress, totalDistance: startProgress, tyreWear: Math.random()*5, status:'OK', isDSQ:false, penalty:null, penaltySeconds:0, hidden:false, lastCrossTick:0};
+  });
+}
+
+let state = {
+  lap: 1, maxLaps: 78, flagStatus: 'NORMAL', yellowSector: null,
+  paused: false,
+  gridConfirmed: false,
+  tickCount: 0,
+  fastestLap: {abbr:null, timeSec:null},
+  raceFinished: false,
+  drivers: freshDrivers(),
+  logs: [{time:getTimestamp(), sender:'SYSTEM', message:'Track Control Panel Initialized.'}],
+  stewardIncidents: [],
+  _v: 0
+};
+
+let currentRole=null, currentSubRole=null, selectedDriver=null;
+let overlay, pathLen, lightInterval=null, tickInterval=null;
+
+function getTimestamp() {
+  const d = new Date();
+  return d.toTimeString().split(' ')[0];
+}
+
+function curvatureAt(p){
+  const wave = Math.sin(p*Math.PI*6) * 0.5 + Math.sin(p*Math.PI*2)*0.3;
+  return 1 + wave*0.45;
+}
+
+function tireClassFor(t){
+  return t==='S' ? 'soft' : (t==='M' ? 'medium' : 'hard');
+}
+
+function raceSort(a,b){
+  return (b.totalDistance||b.progress||0) - (a.totalDistance||a.progress||0);
+}
+
+function driverBadgesFor(d){
+  let out = '';
+  if(d.status==='PIT') out += '<span class="pit-badge" title="In the pits">P</span>';
+  if(d.penaltySeconds) out += `<span class="penalty-badge" title="Time penalty applied">+${d.penaltySeconds}s</span>`;
+  if(state.fastestLap && state.fastestLap.abbr===d.abbr) out += '<span class="fastest-lap-badge" title="Fastest lap">⏱</span>';
+  if(state.raceFinished && !d.isDSQ && !d.status.startsWith('DNF')) out += '<span class="checkered-badge" title="Finished"></span>';
+  return out;
+}
+
+function render(){
+  const flagPill = document.getElementById('status-flag-pill');
+  document.getElementById('lap-counter').innerText = `${state.lap} / ${state.maxLaps}`;
+  flagPill.className = "px-3 sm:px-4 py-1 rounded font-bold tracking-widest text-[10px] sm:text-xs uppercase transition-all duration-300 ";
+  const f = state.flagStatus;
+  if(f==='GREEN'||f==='NORMAL'){flagPill.className+=' bg-emerald-600 text-white';flagPill.innerText='GREEN FLAG / RACE LIVE';}
+  else if(f==='YELLOW'){flagPill.className+=' bg-amber-400 text-black blink-y';flagPill.innerText=`YELLOW FLAG - SECTOR ${state.yellowSector||'GENERAL'}`;}
+  else if(f==='VSC'){flagPill.className+=' bg-amber-500 text-black';flagPill.innerText='VIRTUAL SAFETY CAR';}
+  else if(f==='SC'){flagPill.className+=' bg-amber-600 text-black blink-y';flagPill.innerText='SAFETY CAR DEPLOYED';}
+  else if(f==='RED'){flagPill.className+=' bg-red-600 text-white blink-r';flagPill.innerText= state.raceFinished ? 'CHECKERED FLAG - RACE FINISHED' : 'RED FLAG - SESSION SUSPENDED';}
+  else if(f==='STARTING'){flagPill.className+=' bg-neutral-800 text-white';flagPill.innerText='RACE START SEQUENCE';}
+  if(state.paused){ flagPill.innerText += ' (PAUSED)'; }
+
+  updateFlagPanel();
+  updateTVLeaderboard();
+  updateTelemetryTable();
+  updateRadioLog();
+  updateCarsOnTrack();
+  syncWorkspace();
+  updateTrackMapAnimation();
+  updateSyncBadge();
+}
+
+function updateSyncBadge(){
+  const el=document.getElementById('sync-status');
+  if(!el) return;
+  el.innerText = `🔗 LOCAL / ACTIVE`;
+  el.className = 'text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-emerald-500';
+}
+
+function updateTrackMapAnimation() {
+  const mapOverlay = document.getElementById('sector-overlay');
+  if(!mapOverlay || !pathLen) return;
+
+  mapOverlay.className.baseVal = "fill-none stroke-[5] stroke-linejoin-round stroke-linecap-round transition-all duration-300";
+  mapOverlay.style.strokeDasharray = "none";
+  mapOverlay.style.strokeDashoffset = "0";
+  mapOverlay.style.stroke = "transparent";
+
+  const f = state.flagStatus;
+  
+  if (f === 'RED') {
+    mapOverlay.classList.add('track-red-flag');
+  } else if (f === 'SC') {
+    mapOverlay.classList.add('track-sc');
+  } else if (f === 'VSC') {
+    mapOverlay.classList.add('track-vsc');
+  } else if (f === 'YELLOW' && state.yellowSector) {
+    mapOverlay.classList.add('track-sector-yellow');
+    const third = pathLen / 3;
+    mapOverlay.style.strokeDasharray = `${third} ${pathLen}`;
+    if (state.yellowSector === 1) mapOverlay.style.strokeDashoffset = "0";
+    if (state.yellowSector === 2) mapOverlay.style.strokeDashoffset = `-${third}`;
+    if (state.yellowSector === 3) mapOverlay.style.strokeDashoffset = `-${third * 2}`;
+  }
+}
+
+function updateFlagPanel(){
+  const stripe=document.getElementById('dynamic-stripe'), panel=document.getElementById('flag-panel');
+  const title=document.getElementById('f-title'), cont=document.getElementById('f-content');
+  panel.classList.remove('pulse2');
+  if(state.flagStatus==='NORMAL'){stripe.style.height='0';stripe.style.opacity='0';panel.style.height='0';return;}
+  stripe.style.opacity='1'; stripe.style.height='140px'; panel.style.height='75px';
+  const f=state.flagStatus;
+  const map = {
+    YELLOW:['YELLOW FLAG','var(--safety-yellow)','#000',`SECTOR ${state.yellowSector||'GENERAL'}`],
+    GREEN:['GREEN FLAG','var(--safety-green)','#fff','TRACK CLEAR'],
+    VSC:['VSC ACTIVE','var(--safety-yellow)','#000','VIRTUAL SAFETY CAR'],
+    SC:['SAFETY CAR','var(--safety-yellow)','#000','SAFETY CAR DEPLOYED'],
+    RED:['RED FLAG','var(--f1-red)','#fff', state.raceFinished ? 'RACE FINISHED' : 'SESSION SUSPENDED']
+  };
+  if(map[f]){
+    title.innerText=map[f][0]; title.style.background=map[f][1]; title.style.color=map[f][2]; cont.innerText=map[f][3];
+    stripe.style.background=map[f][1];
+    if(f==='VSC'||f==='RED') panel.classList.add('pulse2');
+  }
+}
+
+function gapTextFor(sorted, idx){
+  const d = sorted[idx];
+  if(d.isDSQ) return 'DSQ';
+  if(d.status==='DNF_CRASH') return 'DNF';
+  if(d.status==='DNF_ENGINE') return 'DNF';
+  if(d.status==='PIT') return 'PIT';
+  if(idx===0) return 'LEADER';
+  const leaderTD = sorted[0].totalDistance || 0;
+  const gapSeconds = Math.max(0, (leaderTD - (d.totalDistance||0)) * LAP_SECONDS);
+  return `+${gapSeconds.toFixed(3)}s`;
+}
+
+function updateTVLeaderboard(){
+  const grid=document.getElementById('ui-grid'); grid.innerHTML='';
+  const sorted=[...state.drivers].sort(raceSort);
+  sorted.forEach((d,i)=>{
+    const row=document.createElement('div');
+    row.className='flex items-center h-[26px] bg-neutral-900/60 border-b border-neutral-950 text-xs px-2 cursor-pointer transition-all '+
+      (d.isDSQ?' opacity-30':'')+(selectedDriver===d.abbr?' bg-neutral-800 border-l-2 border-red-600':' hover:bg-neutral-850');
+    row.onclick=()=>{selectedDriver=d.abbr; render();};
+    const gapText = gapTextFor(sorted, i);
+    let tireBadge=`<div class="f1-tire tel-font ${tireClassFor(d.tire)}">${d.tire}</div>`;
+    if(d.isDSQ) tireBadge='<div class="text-[9px] text-red-500 font-bold tel-font">OUT</div>';
+    else if(d.status==='DNF_CRASH') tireBadge='<div class="text-[9px] text-red-500 font-bold tel-font">CRASH</div>';
+    else if(d.status==='DNF_ENGINE') tireBadge='<div class="text-[9px] text-amber-500 font-bold tel-font">ENGINE</div>';
+    const badges = driverBadgesFor(d);
+    row.innerHTML=`<div class="w-6 text-center font-black pos-font">${i+1}</div>
+      <div class="w-4 mx-2 flex items-center justify-center">${teamLogoTag(d)}</div>
+      <div class="font-bold flex-1 text-white driver-font">${d.abbr}</div>
+      <div class="flex items-center space-x-1 mr-1">${badges}</div>
+      <div class="text-[10px] text-neutral-400 tel-font w-16 text-right pr-2">${gapText}</div>${tireBadge}`;
+    grid.appendChild(row);
+  });
+}
+
+function updateTelemetryTable(){
+  const tb=document.getElementById('leaderboard-body'); tb.innerHTML='';
+  const sorted=[...state.drivers].sort(raceSort);
+  sorted.forEach((d,idx)=>{
+    let statusMarkup='<span class="text-emerald-500 font-bold tel-font">OK</span>';
+    if(d.isDSQ) statusMarkup='<span class="text-red-600 line-through tel-font">DSQ</span>';
+    else if(d.status==='DNF_CRASH') statusMarkup='<span class="text-red-500 animate-pulse tel-font">DNF (CRASH)</span>';
+    else if(d.status==='DNF_ENGINE') statusMarkup='<span class="text-amber-500 tel-font">DNF (ENGINE)</span>';
+    else if(d.status==='PIT') statusMarkup='<span class="text-sky-400 animate-pulse tel-font">PIT</span>';
+    const gapText = gapTextFor(sorted, idx);
+    const badges = driverBadgesFor(d);
+    const tr=document.createElement('tr');
+    tr.className='border-b border-neutral-900/60';
+    tr.innerHTML=`<td class="py-1 font-bold text-neutral-500 w-8 pos-font">${idx+1}</td>
+      <td class="py-1"><div class="flex items-center space-x-1.5">${teamLogoTag(d)}<span class="text-neutral-200 driver-font">${d.fname[0]}. ${d.lname}</span><span class="flex items-center space-x-1">${badges}</span></div></td>
+      <td class="py-1 text-center"><div class="f1-tire tel-font ${tireClassFor(d.tire)} mx-auto">${d.tire}</div></td>
+      <td class="py-1 text-right text-neutral-400 tel-font text-[10px]">${gapText}</td>
+      <td class="py-1 text-right text-neutral-400 tel-font">${Math.floor(d.tyreWear||0)}%</td>
+      <td class="py-1 text-right">${statusMarkup}</td>`;
+    tb.appendChild(tr);
+  });
+}
+
+function updateRadioLog(){
+  const box=document.getElementById('chat-messages'); box.innerHTML='';
+  state.logs.slice(-40).forEach(log=>{
+    const isSystem=log.sender==='SYSTEM';
+    const div=document.createElement('div');
+    div.className='py-1 border-b border-neutral-900/40 flex flex-col';
+    let senderMarkup=`<span class="text-red-500 font-bold">[${log.sender}]</span>`;
+    if(isSystem) senderMarkup='<span class="text-neutral-500 font-bold">[SYSTEM]</span>';
+    div.innerHTML=`<div class="flex justify-between items-center text-[9px] text-neutral-600"><span>${senderMarkup}</span><span>${log.time}</span></div>
+      <p class="text-neutral-300 mt-0.5 text-xs font-normal leading-relaxed">${log.message}</p>`;
+    box.appendChild(div);
+  });
+  box.scrollTop=box.scrollHeight;
+}
+
+function updateCarsOnTrack(){
+  if(!overlay || !pathLen) return;
+  state.drivers.forEach(d=>{
+    const el=document.getElementById('car-'+d.abbr);
+    if(!el || d.isDSQ || d.hidden) { 
+      if(el) el.style.display='none'; 
+      return; 
+    }
+    el.style.display='block';
+    const pt=overlay.getPointAtLength((d.progress%1)*pathLen);
+    el.setAttribute('cx',pt.x); el.setAttribute('cy',pt.y);
+    el.classList.toggle('pit-frozen', d.status==='PIT');
+  });
+}
+
+function initCars(){
+  const layer=document.getElementById('car-layer'); layer.innerHTML='';
+  state.drivers.forEach(d=>{
+    const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('id','car-'+d.abbr); c.setAttribute('r','4.5');
+    c.setAttribute('fill',d.color); c.setAttribute('stroke','#000'); c.setAttribute('stroke-width','1');
+    c.style.cursor='pointer';
+    c.onclick=()=>{selectedDriver=d.abbr; render();};
+    layer.appendChild(c);
+  });
+}
+
+function showModal(title, text, borderColor, textColor){
+  document.getElementById('modal-title').innerText = title;
+  document.getElementById('modal-body').innerText = text;
+  document.getElementById('custom-modal').classList.remove('hidden');
+}
+function closeModal(){
+  document.getElementById('custom-modal').classList.add('hidden');
+}
+
+function syncWorkspace(){
+  if(currentRole) renderRoleWorkspace();
+}
+
+function pushState(){}
+
+// ================= LOGIN =================
+function handleLogin(){
+  const v=document.getElementById('access-code-input').value.trim().toUpperCase();
+  if(v==='RUI-RD'){currentRole='director';currentSubRole='Rui Marques';}
+  else if(v==='CHAIR'){currentRole='chair';currentSubRole='Chair/USG';}
+  else if(v==='PRO-TV'){currentRole='tv';currentSubRole='Live Broadcast';}
+  else if(STEWARDS[v.replace('STW-','')]){currentRole='steward';currentSubRole=STEWARDS[v.replace('STW-','')];}
+  else if(TEAMS[v.replace('-TP','')]){currentRole='team_principal';currentSubRole=v.replace('-TP','');}
+  else { showModal('ERROR','Unauthorized access code. Please check the code guide.','border-red-600','text-red-500'); return; }
+
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('role-badge').innerText=`${currentRole.toUpperCase()} : ${currentSubRole}`;
+  renderRoleWorkspace();
+  state.logs.push({time:getTimestamp(),sender:'SYSTEM',message:`🟢 ${currentSubRole} connected to the system.`});
+  render();
+}
+
+function logout(){
+  state.logs.push({time:getTimestamp(),sender:'SYSTEM',message:`🔴 ${currentSubRole} disconnected.`});
+  currentRole=null; currentSubRole=null;
+  document.getElementById('login-screen').classList.remove('hidden');
+  render();
+}
+
+function sendChatMessage(){
+  const input=document.getElementById('chat-input');
+  const text=input.value.trim(); if(!text) return;
+  state.logs.push({time:getTimestamp(),sender:currentSubRole||'ANONYMOUS',message:text});
+  input.value=''; render();
+}
+
+// ================= ROLE WORKSPACES =================
+function renderRoleWorkspace(){
+  const c=document.getElementById('workspace-container');
+  if(currentRole==='chair') return renderChairWorkspace(c);
+  if(currentRole==='director') return renderDirectorWorkspace(c);
+  if(currentRole==='steward') return renderStewardWorkspace(c);
+  if(currentRole==='team_principal') return renderTPWorkspace(c);
+  if(currentRole==='tv') return renderTVWorkspace(c);
+}
+
+function activeDriverOptions(selected){
+  return state.drivers.filter(d=>!d.isDSQ && !d.status.startsWith('DNF') && !d.hidden)
+    .sort(raceSort)
+    .map((d,i)=>`<option value="${d.abbr}" ${d.abbr===selected?'selected':''}>${i+1}. ${d.fname} ${d.lname} (${d.abbr})</option>`).join('');
+}
+
+function renderChairWorkspace(container){
+  container.innerHTML = `
+    <div class="flex flex-col h-full space-y-3 overflow-y-auto">
+      <div class="flex justify-between items-center border-b border-neutral-800 pb-2">
+        <h3 class="f1b text-sm tracking-widest text-yellow-500 uppercase">CHAIR / USG CONTROL PANEL</h3>
+      </div>
+
+      <div class="border border-yellow-600/30 p-2.5 rounded bg-yellow-950/10 space-y-2">
+        <span class="text-[10px] text-yellow-500 font-bold uppercase tracking-wider block">🏁 RACE SETTINGS</span>
+        <div class="flex items-center space-x-2">
+          <label class="text-[10px] text-neutral-400 font-bold uppercase whitespace-nowrap">Total Lap Count:</label>
+          <input type="number" id="chair-lap-count-input" min="1" max="200" step="1" value="${state.maxLaps}" class="flex-1 bg-black border border-neutral-800 text-white px-2 py-1 rounded text-[11px] text-center font-bold">
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <button onclick="applyLapCountOnly()" class="bg-neutral-800 hover:bg-neutral-700 text-white font-bold py-1.5 rounded text-[10px] uppercase tracking-wider">UPDATE LAP COUNT ONLY</button>
+          <button onclick="resetSimulation()" class="bg-red-700 hover:bg-red-600 text-white font-bold py-1.5 rounded text-[10px] uppercase tracking-wider">🔄 RESTART RACE</button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2">
+        <button id="chair-pause-btn" onclick="toggleRacePause()" class="col-span-2 bg-amber-600 hover:bg-amber-700 text-black font-bold py-1.5 rounded text-[11px] uppercase tracking-wider">⏸ PAUSE RACE</button>
+        <button onclick="changeTrackFlag('GREEN')" class="bg-emerald-700 hover:bg-emerald-600 text-white font-bold py-1.5 rounded text-[11px] uppercase tracking-wider">🟢 GREEN</button>
+        <button onclick="changeTrackFlag('VSC')" class="bg-amber-500 hover:bg-amber-600 text-black font-bold py-1.5 rounded text-[11px] uppercase tracking-wider">⏱️ VSC</button>
+        <button onclick="changeTrackFlag('SC')" class="bg-amber-600 hover:bg-amber-700 text-black font-bold py-1.5 rounded text-[11px] uppercase tracking-wider">🚓 SAFETY CAR</button>
+        <button onclick="changeTrackFlag('RED')" class="bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 rounded text-[11px] uppercase tracking-wider">🔴 RED FLAG</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderDirectorWorkspace(container){
+  container.innerHTML = `
+    <div class="flex flex-col h-full space-y-3">
+      <h3 class="f1b text-sm tracking-widest text-red-500 border-b border-neutral-800 pb-2 uppercase">RACE DIRECTOR (${currentSubRole})</h3>
+      <div class="grid grid-cols-2 gap-2">
+        <button onclick="changeTrackFlag('GREEN')" class="bg-emerald-700 hover:bg-emerald-600 text-white font-bold py-1.5 rounded text-[11px] uppercase">🟢 GREEN</button>
+        <button onclick="changeTrackFlag('VSC')" class="bg-amber-500 hover:bg-amber-600 text-black font-bold py-1.5 rounded text-[11px] uppercase">⏱️ VSC</button>
+        <button onclick="changeTrackFlag('SC')" class="bg-amber-600 hover:bg-amber-700 text-black font-bold py-1.5 rounded text-[11px] uppercase">🚓 SC</button>
+        <button onclick="changeTrackFlag('RED')" class="bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 rounded text-[11px] uppercase">🔴 RED</button>
+      </div>
+    </div>`;
+}
+
+function renderStewardWorkspace(container){
+  container.innerHTML = `
+    <div class="flex flex-col h-full space-y-3">
+      <h3 class="f1b text-sm tracking-widest text-emerald-500 border-b border-neutral-800 pb-2 uppercase">STEWARDS ROOM (${currentSubRole})</h3>
+      <div class="text-xs text-neutral-400">Panel active. Monitor racing incidents.</div>
+    </div>`;
+}
+
+function renderTPWorkspace(container){
+  const teamData=TEAMS[currentSubRole]||{name:'TEAM',color:'#ff0000'};
+  container.innerHTML = `
+    <div class="flex flex-col h-full space-y-3">
+      <h3 class="f1b text-sm tracking-widest uppercase border-b border-neutral-800 pb-2" style="color:${teamData.color}">${teamData.name} PIT WALL</h3>
+      <div id="tp-drivers-container" class="space-y-3"></div>
+    </div>`;
+  renderTPDrivers();
+}
+
+function renderTVWorkspace(container){
+  container.innerHTML = `
+    <div class="flex flex-col h-full space-y-3">
+      <h3 class="f1b text-sm tracking-widest text-sky-400 border-b border-neutral-800 pb-2 uppercase">LIVE BROADCAST FEED</h3>
+      <div class="text-xs text-neutral-400">Broadcast telemetries synced live.</div>
+    </div>`;
+}
+
+function renderTPDrivers(){
+  const container=document.getElementById('tp-drivers-container');
+  if(!container) return;
+  const teamDrivers=state.drivers.filter(d=>d.team===currentSubRole);
+  container.innerHTML='';
+  teamDrivers.forEach(d=>{
+    const div=document.createElement('div');
+    div.className='flex items-center justify-between bg-black/60 p-2 rounded border border-neutral-800 text-xs';
+    div.innerHTML=`
+      <div class="flex items-center space-x-2">
+        <span class="font-bold driver-font text-white">${d.fname} ${d.lname} (${d.abbr})</span>
+        <span class="text-[10px] text-neutral-400">Tire: ${d.tire} (${Math.floor(d.tyreWear||0)}%)</span>
+      </div>
+      <button onclick="requestPitStop('${d.abbr}')" class="bg-sky-600 hover:bg-sky-500 text-white px-2 py-1 rounded font-bold text-[10px] uppercase">BOX THIS LAP</button>
+    `;
+    container.appendChild(div);
+  });
+}
+
+function requestPitStop(abbr){
+  const d=state.drivers.find(x=>x.abbr===abbr);
+  if(d){
+    d.status='PIT';
+    d.tyreWear=0;
+    state.logs.push({time:getTimestamp(),sender:currentSubRole,message:`🔧 ${d.abbr} boxed for fresh tyres.`});
+    setTimeout(()=>{ d.status='OK'; render(); }, 4000);
+    render();
+  }
+}
+
+function changeTrackFlag(flag){
+  state.flagStatus=flag;
+  state.logs.push({time:getTimestamp(),sender:currentSubRole||'RACE CONTROL',message:`🚩 TRACK STATUS: ${flag}`});
+  render();
+}
+
+function toggleRacePause(){
+  state.paused = !state.paused;
+  state.logs.push({time:getTimestamp(),sender:currentSubRole,message: state.paused ? '⏸ Race paused.' : '▶ Race resumed.'});
+  render();
+}
+
+function applyLapCountOnly(){
+  const input = document.getElementById('chair-lap-count-input');
+  if(input) state.maxLaps = parseInt(input.value) || 78;
+  render();
+}
+
+function resetSimulation(){
+  state.drivers = freshDrivers();
+  state.lap = 1;
+  state.flagStatus = 'NORMAL';
+  render();
+}
+
+// Initial initialization for track path calculations
+window.addEventListener('DOMContentLoaded', () => {
+  overlay = document.getElementById('main-track');
+  if(overlay) pathLen = overlay.getTotalLength();
+  initCars();
+  render();
+});
+</script>
+</body>
+</html>

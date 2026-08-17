@@ -208,6 +208,23 @@ select, input, button { font-family: 'Rajdhani', sans-serif; }
   flex-shrink: 0;
 }
 
+/* DSQ badge (grey banned tag) */
+.dsq-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  height: 15px;
+  background: #52525b;
+  color: #fff;
+  font-family: 'F1Bold', 'Rajdhani', sans-serif;
+  font-weight: 900;
+  font-size: 9px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 @media (max-width: 639px) {
   #start-lights { padding: 0.5rem; gap: 0.4rem; }
   #start-lights .w-8 { width: 1.4rem; height: 1.4rem; }
@@ -451,7 +468,7 @@ const PIT_STOP_MAX_MS = 20000;
 // to the line caused the lap counter to increment incorrectly right at the
 // start of the race.
 function gridStartProgress(i, total){
-  const spread = 0.05; // pack all grid cars into the first 5% of the lap
+  const spread = 0.03; // pack all grid cars into the first 5% of the lap
   const denom = Math.max(1, total - 1);
   return 0.01 + ((total - 1 - i) / denom) * spread;
 }
@@ -496,6 +513,7 @@ function driverBadgesFor(d){
   let out = '';
   if(d.status==='PIT') out += '<span class="pit-badge" title="In the pits">P</span>';
   if(d.penaltySeconds) out += `<span class="penalty-badge" title="Time penalty applied">+${d.penaltySeconds}s</span>`;
+  if(d.isDSQ) out += '<span class="dsq-badge" title="Disqualified">DSQ</span>';
   if(state.fastestLap && state.fastestLap.abbr===d.abbr) out += '<span class="fastest-lap-badge" title="Fastest lap">⏱</span>';
   if(state.raceFinished && !d.isDSQ && !d.status.startsWith('DNF')) out += '<span class="checkered-badge" title="Finished"></span>';
   return out;
@@ -1021,8 +1039,14 @@ function renderDirectorWorkspace(container){
         <select id="rd-penalty-type" class="w-full bg-black border border-neutral-800 text-white px-2 py-1 rounded text-[11px]">
           <option value="5">5 SECOND PENALTY</option>
           <option value="10">10 SECOND PENALTY</option>
+          <option value="15">15 SECOND PENALTY</option>
+          <option value="20">20 SECOND PENALTY</option>
+          <option value="30">30 SECOND PENALTY</option>
+          <option value="DSQ">DISQUALIFICATION (DSQ)</option>
+          <option value="REPRIMAND">REPRIMAND (NO TIME PENALTY)</option>
         </select>
         <button onclick="submitRDIncident()" class="w-full bg-neutral-900 hover:bg-neutral-800 text-[10px] font-bold py-1.5 rounded border border-neutral-800">REFER TO STEWARDS ROOM</button>
+        <div id="rd-incident-queue" class="text-[9px] text-neutral-500 font-bold uppercase pt-1"></div>
       </div>
     </div>`;
 }
@@ -1030,10 +1054,24 @@ function renderDirectorWorkspace(container){
 function submitRDIncident(){
   if(!selectedDriver){ showModal('MISSING SELECTION','Please select a driver from the left order panel.','border-red-600','text-red-500'); return; }
   const driver=state.drivers.find(d=>d.abbr===selectedDriver);
+  if(!driver){ return; }
+  if(driver.isDSQ || driver.status.startsWith('DNF')){ showModal('RULE VIOLATION','An incident cannot be referred for a car that is already out of the race.','border-red-600','text-red-500'); return; }
   const penaltySel = document.getElementById('rd-penalty-type');
-  const seconds = penaltySel ? parseInt(penaltySel.value,10) : 5;
-  state.stewardIncidents.push({id:Math.random().toString(36).slice(2,9), driverAbbr:selectedDriver, driverName:`${driver.fname} ${driver.lname}`, penaltyType:`${seconds} SECONDS`, penaltySeconds:seconds, votes:{}, status:'PENDING'});
-  state.logs.push({time:getTimestamp(),sender:currentSubRole,message:`⚖️ INVESTIGATION REFERRAL: A ${seconds}-second penalty request for ${driver.fname} ${driver.lname} has been referred to the Stewards Room.`});
+  const raw = penaltySel ? penaltySel.value : '5';
+
+  let penaltyKind='TIME', penaltySeconds=0, penaltyType='';
+  if(raw==='DSQ'){ penaltyKind='DSQ'; penaltyType='DISQUALIFICATION'; }
+  else if(raw==='REPRIMAND'){ penaltyKind='REPRIMAND'; penaltyType='REPRIMAND (NO TIME)'; }
+  else { penaltySeconds=parseInt(raw,10)||5; penaltyKind='TIME'; penaltyType=`${penaltySeconds} SECONDS`; }
+
+  state.stewardIncidents.push({
+    id:Math.random().toString(36).slice(2,9),
+    driverAbbr:selectedDriver,
+    driverName:`${driver.fname} ${driver.lname}`,
+    penaltyType, penaltyKind, penaltySeconds,
+    votes:{}, status:'PENDING'
+  });
+  state.logs.push({time:getTimestamp(),sender:currentSubRole,message:`⚖️ INVESTIGATION REFERRAL: A ${penaltyType} request for ${driver.fname} ${driver.lname} has been referred to the Stewards Room.`});
   render();
   pushState();
 }
@@ -1044,7 +1082,7 @@ function renderStewardWorkspace(container){
       <h3 class="f1b text-sm tracking-widest text-emerald-500 border-b border-neutral-800 pb-2 uppercase">STEWARDS ROOM (${currentSubRole})</h3>
       <div id="steward-active-incident" class="bg-black/60 p-3 rounded border border-neutral-800 flex-1 flex flex-col justify-center items-center text-center"></div>
       <div class="grid grid-cols-2 gap-2 mt-auto">
-        <button onclick="voteStewardIncident('GUILTY')" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-2 rounded uppercase">GUILTY / APPROVE PENALTY</button>
+        <button id="steward-guilty-btn" onclick="voteStewardIncident('GUILTY')" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-2 rounded uppercase">GUILTY / APPROVE PENALTY</button>
         <button onclick="voteStewardIncident('NOT_GUILTY')" class="bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-bold py-2 rounded uppercase">RACING INCIDENT / NO PENALTY</button>
       </div>
     </div>`;
@@ -1063,23 +1101,61 @@ function applyPenaltyToDriver(abbr, seconds){
   d.totalDistance = (d.totalDistance||0) - distancePenalty;
 }
 
+// Applies a disqualification: the driver is immediately removed from the
+// classification (badged DSQ, greyed out, excluded from gaps/leaderboard
+// ordering via gapTextFor) but their car stays visible on track until it
+// naturally gets lapped/pulled in, matching how the DNF "passedBy" hide
+// logic already works elsewhere.
+function applyDSQToDriver(abbr){
+  const d = state.drivers.find(x=>x.abbr===abbr);
+  if(!d) return;
+  d.isDSQ = true;
+}
+
+// Only ONE steward vote is needed to decide an incident (single-tester /
+// single-steward setups). Change this back to
+// Math.floor(Object.keys(STEWARDS).length/2) + 1 if you want a real
+// majority vote among all 4 stewards instead.
+const STEWARD_MAJORITY_NEEDED = 1;
+
+function pendingIncident(){
+  return state.stewardIncidents.find(i=>i.status==='PENDING');
+}
+
 function voteStewardIncident(vote){
-  const pending=state.stewardIncidents.find(i=>i.status==='PENDING');
+  const pending=pendingIncident();
   if(!pending){ showModal('NONE','There is no active incident to vote on.','border-neutral-500','text-neutral-500'); return; }
+  if(!currentSubRole){ return; }
+
   pending.votes[currentSubRole]=vote;
-  state.logs.push({time:getTimestamp(),sender:currentSubRole,message:`⚖️ Steward ${currentSubRole} voted on the ${pending.driverName} incident.`});
+  state.logs.push({time:getTimestamp(),sender:currentSubRole,message:`⚖️ Steward ${currentSubRole} voted "${vote==='GUILTY'?'GUILTY':'RACING INCIDENT'}" on the ${pending.driverName} incident.`});
+
+  const totalStewards = Object.keys(STEWARDS).length; // 4
   const votes=Object.values(pending.votes);
-  if(votes.length>=2){
-    const guilty=votes.filter(v=>v==='GUILTY').length;
-    const notGuilty=votes.length-guilty;
-    if(guilty>notGuilty){
-      pending.status='APPROVED';
+  const guilty=votes.filter(v=>v==='GUILTY').length;
+  const notGuilty=votes.length-guilty;
+
+  // Only resolve once a side has secured an unbeatable majority (>= 3 of 4),
+  // or every steward has voted. Previously this resolved as soon as ANY 2
+  // votes came in, so a single split 1-1 vote (with 2 stewards never even
+  // voting) could wrongly close out or dismiss a case.
+  const decisive = guilty>=STEWARD_MAJORITY_NEEDED || notGuilty>=STEWARD_MAJORITY_NEEDED || votes.length>=totalStewards;
+  if(!decisive){ render(); pushState(); return; }
+
+  if(guilty>notGuilty){
+    pending.status='APPROVED';
+    if(pending.penaltyKind==='DSQ'){
+      applyDSQToDriver(pending.driverAbbr);
+      state.logs.push({time:getTimestamp(),sender:'STEWARDS PANEL',message:`🚨 OFFICIAL DECISION: ${pending.driverName} has been DISQUALIFIED from the race!`});
+    } else if(pending.penaltyKind==='REPRIMAND'){
+      state.logs.push({time:getTimestamp(),sender:'STEWARDS PANEL',message:`🚨 OFFICIAL DECISION: ${pending.driverName} has been issued a formal reprimand. No time penalty applied.`});
+    } else {
       applyPenaltyToDriver(pending.driverAbbr, pending.penaltySeconds || 5);
       state.logs.push({time:getTimestamp(),sender:'STEWARDS PANEL',message:`🚨 OFFICIAL DECISION: ${pending.penaltyType} penalty approved and applied to ${pending.driverName}!`});
-    } else {
-      pending.status='DISMISSED';
-      state.logs.push({time:getTimestamp(),sender:'STEWARDS PANEL',message:`🛡️ OFFICIAL DECISION: The ${pending.driverName} incident was closed as a 'Racing Incident'.`});
     }
+  } else {
+    pending.status='DISMISSED';
+    state.logs.push({time:getTimestamp(),sender:'STEWARDS PANEL',message:`🛡️ OFFICIAL DECISION: The ${pending.driverName} incident was closed as a 'Racing Incident'.`});
   }
   render();
   pushState();
@@ -1157,19 +1233,40 @@ function renderTVWorkspace(container){
 
 function syncWorkspace(){
   if(currentRole==='chair') populateChairSelectors();
-  else if(currentRole==='director'){ const el=document.getElementById('sel-driver-txt'); if(el) el.innerText='Driver: '+(selectedDriver||'Not selected'); }
+  else if(currentRole==='director'){
+    const el=document.getElementById('sel-driver-txt');
+    if(el) el.innerText='Driver: '+(selectedDriver||'Not selected');
+    const queueEl=document.getElementById('rd-incident-queue');
+    if(queueEl){
+      const pendingCount = state.stewardIncidents.filter(i=>i.status==='PENDING').length;
+      queueEl.innerText = pendingCount>0 ? `⏳ ${pendingCount} incident(s) awaiting the Stewards Room` : '';
+    }
+  }
   else if(currentRole==='steward'){
-    const pending=state.stewardIncidents.find(i=>i.status==='PENDING');
+    const pending=pendingIncident();
     const div=document.getElementById('steward-active-incident');
+    const guiltyBtn=document.getElementById('steward-guilty-btn');
     if(div){
       if(pending){
-        const voters=Object.keys(pending.votes).join(', ')||'No votes yet';
+        const votes=pending.votes;
+        const voters=Object.keys(votes).join(', ')||'No votes yet';
+        const guiltyCount=Object.values(votes).filter(v=>v==='GUILTY').length;
+        const notGuiltyCount=Object.values(votes).length-guiltyCount;
+        const otherPending = state.stewardIncidents.filter(i=>i.status==='PENDING').length - 1;
         div.innerHTML=`<span class="text-red-500 font-bold uppercase block mb-1 text-xs">INCIDENT UNDER REVIEW</span>
-          <p class="text-xs font-bold text-white">${pending.driverName} - ${pending.penaltyType} Penalty Request</p>
-          <p class="text-[9px] text-neutral-400 mt-1.5">Stewards Who Voted: ${voters}</p>`;
+          <p class="text-xs font-bold text-white">${pending.driverName} - ${pending.penaltyType} Requested</p>
+          <p class="text-[9px] text-neutral-400 mt-1.5">Stewards Who Voted: ${voters}</p>
+          <p class="text-[9px] text-neutral-500 mt-1">${guiltyCount} GUILTY / ${notGuiltyCount} RACING INCIDENT &mdash; ${STEWARD_MAJORITY_NEEDED} votes needed to decide</p>
+          ${votes[currentSubRole] ? `<p class="text-[9px] text-emerald-500 mt-1 font-bold uppercase">Your vote: ${votes[currentSubRole]==='GUILTY'?'GUILTY':'RACING INCIDENT'} (you can change it until a decision is reached)</p>` : ''}
+          ${otherPending>0 ? `<p class="text-[9px] text-amber-500 mt-1">⏳ ${otherPending} more incident(s) waiting in queue</p>` : ''}`;
       } else {
         div.innerHTML=`<span class="text-neutral-500 text-xs font-bold uppercase">No Active Incident Under Review.</span>`;
       }
+    }
+    if(guiltyBtn){
+      guiltyBtn.innerText = pending && pending.penaltyKind==='DSQ' ? 'GUILTY / DISQUALIFY'
+        : pending && pending.penaltyKind==='REPRIMAND' ? 'GUILTY / REPRIMAND'
+        : 'GUILTY / APPROVE PENALTY';
     }
   } else if(currentRole==='team_principal'){ renderTPDrivers(); }
 }

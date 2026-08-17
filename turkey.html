@@ -466,9 +466,23 @@ const PIT_STOP_MAX_MS = 20000;
 // to the line caused the lap counter to increment incorrectly right at the
 // start of the race.
 function gridStartProgress(i, total){
-  const spread = 0.05; // pack all grid cars into the first 5% of the lap
+  const spread = 0.03; // Araçların arkaya doğru yayılma mesafesi
   const denom = Math.max(1, total - 1);
-  return 0.01 + ((total - 1 - i) / denom) * spread;
+  
+  // Alt düzlüğün pist üzerindeki konumu (0.0 ile 1.0 arası bir değer).
+  // Araçlar tam alt düzlüğe oturana kadar bu sayıyı değiştir (Örn: 0.3, 0.55, 0.8 vb.)
+  const startOffset = 0.5; 
+  
+  // Araçları belirlediğin başlangıç noktasından (startOffset) geriye doğru diz
+  let progress = startOffset - (i / denom) * spread;
+  
+  // Eğer dizilen arka sıradaki araçların değeri 0'ın altına düşerse, 
+  // onları pistin diğer ucundan (1.0 üzerinden) devam ettirerek yerleştir:
+  if (progress < 0) {
+      progress += 1.0;
+  }
+  
+  return progress;
 }
 
 function freshDrivers(){
