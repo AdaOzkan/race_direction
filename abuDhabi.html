@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover">
 <title>Rayfelmun'26 FIA Control Panel</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <!-- Firebase Realtime Database - used for live sync between screens on GitHub Pages -->
@@ -194,9 +194,54 @@ select, input, button { font-family: 'Rajdhani', sans-serif; }
   flex-shrink: 0;
 }
 
+/* DSQ badge (grey banned tag) — added from the Monaco/Turkey control panel */
+.dsq-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  height: 15px;
+  background: #52525b;
+  color: #fff;
+  font-family: 'F1Bold', 'Rajdhani', sans-serif;
+  font-weight: 900;
+  font-size: 9px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 @media (max-width: 639px) {
   #start-lights { padding: 0.5rem; gap: 0.4rem; }
   #start-lights .w-8 { width: 1.4rem; height: 1.4rem; }
+}
+
+/* ============== MOBILE / PHONE RESPONSIVE POLISH ==============
+   Purely additive rules — nothing above is overridden or removed,
+   these only kick in on narrow (phone) screens. */
+@media (max-width: 767px) {
+  header.bg-neutral-950 { padding-top: 0.6rem; padding-bottom: 0.6rem; row-gap: 0.4rem; }
+  #role-badge { font-size: 9px; padding: 3px 8px; }
+  #lap-counter { font-size: 13px; }
+  #status-flag-pill { font-size: 9px; padding: 4px 8px; }
+  #sync-status { font-size: 8px; }
+  #leaderboard-wrapper { width: 100%; height: 220px; }
+  #track-container svg { max-height: 38vh; }
+  #track-container .absolute.top-4.right-4 { display: none; }
+  .f1-tire { width: 16px; height: 16px; font-size: 11px; }
+  table { font-size: 10px; }
+  #workspace-container, .bg-black\/85 { padding: 0.65rem; }
+  #chat-input { font-size: 11px; }
+  #penalty-overlay { width: 94%; padding: 0.6rem; }
+  #po-name { font-size: 13px; }
+  main.flex-1 { padding-bottom: 0.5rem; }
+  button { -webkit-tap-highlight-color: transparent; }
+  select, input[type="number"], input[type="text"], input[type="password"] { font-size: 16px; } /* prevents iOS auto-zoom on focus */
+  #custom-modal .max-w-md { width: 94%; }
+}
+@media (max-width: 420px) {
+  #leaderboard-wrapper { height: 200px; }
+  .f1b.text-xl { font-size: 1.05rem; }
 }
 </style>
 </head>
@@ -275,6 +320,9 @@ select, input, button { font-family: 'Rajdhani', sans-serif; }
       <div id="dynamic-stripe" class="absolute left-0 top-0 w-1 h-0 transition-all duration-500 z-20"></div>
       <div class="bg-neutral-900 border-b border-neutral-800 py-3 flex justify-center items-center">
         <span class="f1b text-sm text-red-600">F1</span>
+      </div>
+      <div id="leaderboard-mode-toggle" onclick="toggleLeaderboardMode()" title="Click to switch between GAP (to leader) and INTERVAL (to car ahead)" class="bg-neutral-950 border-b border-neutral-800 py-1.5 flex justify-center items-center cursor-pointer hover:bg-neutral-800 transition-colors select-none">
+        <span id="leaderboard-mode-label" class="text-[9px] font-bold uppercase tracking-widest text-neutral-400">GAP</span>
       </div>
       <div id="flag-panel" class="h-0 overflow-hidden transition-all duration-300 flex flex-col bg-neutral-900 text-center">
         <div class="py-1.5 text-xs font-bold uppercase tracking-widest text-black" id="f-title"></div>
@@ -410,18 +458,40 @@ function teamLogoTag(d, sizeClass){
 
 const STEWARDS = {GARRY:'Garry Connelly',DEREK:'Derek Warwick',JOSE:'José Abed',SILVIA:'Silvia Bellot'};
 
+// Tire compound behaviour: soft is fastest but wears out quickest,
+// hard is slowest but lasts the longest, medium sits in between.
 const TIRE_DATA = {
-  S: { speedMult: 1.045, wearRate: 0.60 },
-  M: { speedMult: 1.000, wearRate: 0.35 },
-  H: { speedMult: 0.965, wearRate: 0.20 }
+  S: { speedMult: 1.045 },
+  M: { speedMult: 1.000 },
+  H: { speedMult: 0.965 }
 };
+
+// Tire life span, in laps, before a tire is fully worn (100% wear).
+// Each driver gets a randomized life within the compound's range whenever
+// they start on / switch to that compound, so not every car on the same
+// compound wears out on exactly the same lap.
+const TIRE_LIFE_RANGES = {
+  S: [12, 20],
+  M: [25, 30],
+  H: [35, 40]
+};
+
+function randomTireLife(compound){
+  const range = TIRE_LIFE_RANGES[compound] || TIRE_LIFE_RANGES.M;
+  const [min, max] = range;
+  return min + Math.random() * (max - min);
+}
 
 // ================= STATE =================
 const LAP_SECONDS = 72;        
 const TICK_MS = 150;          
 const TICKS_PER_LAP = LAP_SECONDS * 1000 / TICK_MS; 
 const UNIT = 1 / TICKS_PER_LAP;
+const PIT_STOP_MIN_MS = 19000;
+const PIT_STOP_MAX_MS = 20000;
 
+// Abu Dhabi's own starting-grid placement formula — left exactly as it was,
+// tuned to this track's start/finish line position on the SVG path.
 function gridStartProgress(i, total){
   const spread = 0.03; 
   const denom = Math.max(1, total - 1);
@@ -431,7 +501,7 @@ function gridStartProgress(i, total){
 function freshDrivers(){
   return drivers.map((d,i)=>{
     const startProgress = gridStartProgress(i, drivers.length);
-    return {...d, progress: startProgress, totalDistance: startProgress, tyreWear: Math.random()*5, status:'OK', isDSQ:false, penalty:null, penaltySeconds:0, hidden:false, lastCrossTick:0};
+    return {...d, progress: startProgress, totalDistance: startProgress, tyreWear: Math.random()*5, tireLifeLaps: randomTireLife(d.tire), status:'OK', isDSQ:false, penalty:null, penaltySeconds:0, hidden:false, lastCrossTick:0};
   });
 }
 
@@ -443,7 +513,7 @@ let state = {
   fastestLap: {abbr:null, timeSec:null},
   raceFinished: false,
   drivers: freshDrivers(),
-  logs: [{time:getTimestamp(), sender:'SYSTEM', message:'Track Control Panel Initialized.'}],
+  logs: [{time:getTimestamp(), sender:'SYSTEM', message:'Abu Dhabi GP Race Control System initialized. Select one of the roles.'}],
   stewardIncidents: [],
   _v: 0
 };
@@ -473,6 +543,7 @@ function driverBadgesFor(d){
   let out = '';
   if(d.status==='PIT') out += '<span class="pit-badge" title="In the pits">P</span>';
   if(d.penaltySeconds) out += `<span class="penalty-badge" title="Time penalty applied">+${d.penaltySeconds}s</span>`;
+  if(d.isDSQ) out += '<span class="dsq-badge" title="Disqualified">DSQ</span>';
   if(state.fastestLap && state.fastestLap.abbr===d.abbr) out += '<span class="fastest-lap-badge" title="Fastest lap">⏱</span>';
   if(state.raceFinished && !d.isDSQ && !d.status.startsWith('DNF')) out += '<span class="checkered-badge" title="Finished"></span>';
   return out;
@@ -504,8 +575,14 @@ function render(){
 function updateSyncBadge(){
   const el=document.getElementById('sync-status');
   if(!el) return;
-  el.innerText = `🔗 LOCAL / ACTIVE`;
-  el.className = 'text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-emerald-500';
+  if(typeof syncDisabled !== 'undefined' && syncDisabled){
+    el.innerText = '⚠️ LOCAL MODE (no sharing)';
+    el.className = 'text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-amber-500';
+    return;
+  }
+  const role = isLeader ? 'BROADCAST SOURCE' : 'VIEWER';
+  el.innerText = `🔗 SYNCED (${role})`;
+  el.className = 'text-[9px] sm:text-[10px] font-bold uppercase tracking-wider ' + (isLeader ? 'text-emerald-500' : 'text-sky-400');
 }
 
 function updateTrackMapAnimation() {
@@ -568,7 +645,44 @@ function gapTextFor(sorted, idx){
   return `+${gapSeconds.toFixed(3)}s`;
 }
 
+// ================= LEFT TV LEADERBOARD: GAP / INTERVAL TOGGLE =================
+// GAP = time distance to the race leader (P1).
+// INTERVAL = time distance to the car directly ahead on track.
+// Clicking the small header above the left leaderboard toggles between the two.
+let leaderboardMode = 'GAP'; // 'GAP' | 'INTERVAL'
+
+function toggleLeaderboardMode(){
+  leaderboardMode = leaderboardMode === 'GAP' ? 'INTERVAL' : 'GAP';
+  render();
+}
+
+function updateLeaderboardModeLabel(){
+  const el = document.getElementById('leaderboard-mode-label');
+  if(el) el.innerText = leaderboardMode;
+}
+
+function tvLeaderboardGapText(sorted, idx){
+  const d = sorted[idx];
+  if(d.isDSQ) return 'DSQ';
+  if(d.status==='DNF_CRASH') return 'DNF';
+  if(d.status==='DNF_ENGINE') return 'DNF';
+  if(d.status==='PIT') return 'PIT';
+
+  if(leaderboardMode === 'INTERVAL'){
+    if(idx===0) return '—';
+    const ahead = sorted[idx-1];
+    const intervalSeconds = Math.max(0, ((ahead.totalDistance||0) - (d.totalDistance||0)) * LAP_SECONDS);
+    return `+${intervalSeconds.toFixed(3)}s`;
+  }
+
+  if(idx===0) return '0.000s';
+  const leaderTD = sorted[0].totalDistance || 0;
+  const gapSeconds = Math.max(0, (leaderTD - (d.totalDistance||0)) * LAP_SECONDS);
+  return `+${gapSeconds.toFixed(3)}s`;
+}
+
 function updateTVLeaderboard(){
+  updateLeaderboardModeLabel();
   const grid=document.getElementById('ui-grid'); grid.innerHTML='';
   const sorted=[...state.drivers].sort(raceSort);
   sorted.forEach((d,i)=>{
@@ -576,7 +690,7 @@ function updateTVLeaderboard(){
     row.className='flex items-center h-[26px] bg-neutral-900/60 border-b border-neutral-950 text-xs px-2 cursor-pointer transition-all '+
       (d.isDSQ?' opacity-30':'')+(selectedDriver===d.abbr?' bg-neutral-800 border-l-2 border-red-600':' hover:bg-neutral-850');
     row.onclick=()=>{selectedDriver=d.abbr; render();};
-    const gapText = gapTextFor(sorted, i);
+    const gapText = tvLeaderboardGapText(sorted, i);
     let tireBadge=`<div class="f1-tire tel-font ${tireClassFor(d.tire)}">${d.tire}</div>`;
     if(d.isDSQ) tireBadge='<div class="text-[9px] text-red-500 font-bold tel-font">OUT</div>';
     else if(d.status==='DNF_CRASH') tireBadge='<div class="text-[9px] text-red-500 font-bold tel-font">CRASH</div>';
@@ -656,20 +770,16 @@ function initCars(){
   });
 }
 
-function showModal(title, text, borderColor, textColor){
-  document.getElementById('modal-title').innerText = title;
-  document.getElementById('modal-body').innerText = text;
-  document.getElementById('custom-modal').classList.remove('hidden');
+function showModal(title,text,borderClass='border-yellow-500',titleClass='text-yellow-500'){
+  const modal=document.getElementById('custom-modal');
+  const mTitle=document.getElementById('modal-title');
+  const mBody=document.getElementById('modal-body');
+  modal.classList.remove('hidden');
+  mTitle.innerText=title; mTitle.className=`f1b text-lg tracking-widest uppercase block mb-3 ${titleClass}`;
+  modal.firstElementChild.className=`max-w-md w-full bg-neutral-950 border-2 rounded-lg p-6 text-center shadow-2xl relative ${borderClass}`;
+  mBody.innerHTML=text.replace(/\n/g,'<br>');
 }
-function closeModal(){
-  document.getElementById('custom-modal').classList.add('hidden');
-}
-
-function syncWorkspace(){
-  if(currentRole) renderRoleWorkspace();
-}
-
-function pushState(){}
+function closeModal(){ document.getElementById('custom-modal').classList.add('hidden'); }
 
 // ================= LOGIN =================
 function handleLogin(){
@@ -686,20 +796,21 @@ function handleLogin(){
   renderRoleWorkspace();
   state.logs.push({time:getTimestamp(),sender:'SYSTEM',message:`🟢 ${currentSubRole} connected to the system.`});
   render();
+  pushState();
 }
-
 function logout(){
   state.logs.push({time:getTimestamp(),sender:'SYSTEM',message:`🔴 ${currentSubRole} disconnected.`});
+  pushState();
   currentRole=null; currentSubRole=null;
   document.getElementById('login-screen').classList.remove('hidden');
   render();
 }
-
 function sendChatMessage(){
   const input=document.getElementById('chat-input');
   const text=input.value.trim(); if(!text) return;
   state.logs.push({time:getTimestamp(),sender:currentSubRole||'ANONYMOUS',message:text});
   input.value=''; render();
+  pushState();
 }
 
 // ================= ROLE WORKSPACES =================
@@ -733,19 +844,242 @@ function renderChairWorkspace(container){
         </div>
         <div class="grid grid-cols-2 gap-2">
           <button onclick="applyLapCountOnly()" class="bg-neutral-800 hover:bg-neutral-700 text-white font-bold py-1.5 rounded text-[10px] uppercase tracking-wider">UPDATE LAP COUNT ONLY</button>
-          <button onclick="resetSimulation()" class="bg-red-700 hover:bg-red-600 text-white font-bold py-1.5 rounded text-[10px] uppercase tracking-wider">🔄 RESTART RACE</button>
+          <button onclick="resetSimulation()" class="bg-red-700 hover:bg-red-600 text-white font-bold py-1.5 rounded text-[10px] uppercase tracking-wider">🔄 RESTART RACE FROM SCRATCH</button>
         </div>
+        <p class="text-[9px] text-neutral-600 leading-snug">"Update lap count only": changes the target lap count without affecting the race. "Restart race from scratch": returns all drivers to the starting grid, resets the lap counter to 1, and restarts the race with the lap count entered above.</p>
+      </div>
+
+      <div class="border border-sky-600/30 p-2.5 rounded bg-sky-950/10 space-y-2">
+        <span class="text-[10px] text-sky-400 font-bold uppercase tracking-wider block">🏳️ STARTING GRID</span>
+        <p class="text-[9px] text-neutral-500 leading-snug">Use the MANUAL ORDER EDITING list below to arrange the starting grid, then confirm it. Start lights can only be shown once the grid has been confirmed.</p>
+        <button onclick="confirmStartingGrid()" class="w-full font-bold py-1.5 rounded text-[10px] uppercase tracking-wider ${state.gridConfirmed ? 'bg-emerald-700 hover:bg-emerald-600 text-white' : 'bg-sky-700 hover:bg-sky-600 text-white'}">${state.gridConfirmed ? '✅ STARTING GRID CONFIRMED (RE-CONFIRM)' : '✅ CONFIRM STARTING GRID'}</button>
       </div>
 
       <div class="grid grid-cols-2 gap-2">
+        <button onclick="showLights()" class="bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 rounded text-[11px] uppercase tracking-wider">🚦 START LIGHTS</button>
+        <button onclick="extinguishLightsAndStart()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 rounded text-[11px] uppercase tracking-wider">🏁 EXTINGUISH START</button>
         <button id="chair-pause-btn" onclick="toggleRacePause()" class="col-span-2 bg-amber-600 hover:bg-amber-700 text-black font-bold py-1.5 rounded text-[11px] uppercase tracking-wider">⏸ PAUSE RACE</button>
         <button onclick="changeTrackFlag('GREEN')" class="bg-emerald-700 hover:bg-emerald-600 text-white font-bold py-1.5 rounded text-[11px] uppercase tracking-wider">🟢 GREEN</button>
         <button onclick="changeTrackFlag('VSC')" class="bg-amber-500 hover:bg-amber-600 text-black font-bold py-1.5 rounded text-[11px] uppercase tracking-wider">⏱️ VSC</button>
         <button onclick="changeTrackFlag('SC')" class="bg-amber-600 hover:bg-amber-700 text-black font-bold py-1.5 rounded text-[11px] uppercase tracking-wider">🚓 SAFETY CAR</button>
         <button onclick="changeTrackFlag('RED')" class="bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 rounded text-[11px] uppercase tracking-wider">🔴 RED FLAG</button>
       </div>
+
+      <div class="border border-neutral-800 p-2.5 rounded bg-black/40">
+        <span class="text-[10px] text-neutral-500 font-bold uppercase tracking-wider block mb-1.5">MANUAL ORDER EDITING</span>
+        <div id="chair-order-list" class="space-y-1 max-h-[180px] overflow-y-auto pr-1"></div>
+      </div>
+
+      <div class="border border-neutral-800 p-2.5 rounded bg-black/40 space-y-2">
+        <span class="text-[10px] text-neutral-500 font-bold uppercase tracking-wider block">TRIGGER OVERTAKE (BETWEEN TWO CARS)</span>
+        <div class="grid grid-cols-2 gap-2">
+          <select id="chair-overtake-front" class="bg-black border border-neutral-800 text-white px-2 py-1 rounded text-[11px]"></select>
+          <select id="chair-overtake-back" class="bg-black border border-neutral-800 text-white px-2 py-1 rounded text-[11px]"></select>
+        </div>
+        <textarea id="chair-overtake-text" rows="2" placeholder="Write the overtake description yourself (radio announcement)..." class="w-full bg-black border border-neutral-800 text-white px-2 py-1.5 rounded text-[11px] focus:outline-none"></textarea>
+        <button onclick="chairForceOvertake()" class="w-full bg-sky-700 hover:bg-sky-600 text-white font-bold py-1.5 rounded text-[11px] uppercase tracking-wider">APPLY OVERTAKE</button>
+      </div>
+
+      <div class="border border-neutral-800 p-2.5 rounded bg-black/40 space-y-2">
+        <span class="text-[10px] text-neutral-500 font-bold uppercase tracking-wider block">TRIGGER CRASH / FAILURE</span>
+        <p class="text-[9px] text-neutral-600 leading-snug">Note: Triggering a crash does not automatically change the flag status. If needed, set the flag separately using the buttons above.</p>
+        <select id="chair-crash-driver" class="w-full bg-black border border-neutral-800 text-white px-2 py-1 rounded text-[11px]"></select>
+        <textarea id="chair-crash-text" rows="3" placeholder="Write the crash / failure description yourself (radio announcement)..." class="w-full bg-black border border-neutral-800 text-white px-2 py-1.5 rounded text-[11px] focus:outline-none"></textarea>
+        <select id="chair-crash-type" class="w-full bg-black border border-neutral-800 text-white px-2 py-1 rounded text-[11px]">
+          <option value="DNF_CRASH">Crash (DNF)</option>
+          <option value="DNF_ENGINE">Engine Failure (DNF)</option>
+          <option value="PIT">Enters Pit with Damage</option>
+        </select>
+        <button onclick="chairTriggerCrash()" class="w-full bg-red-700 hover:bg-red-600 text-white font-bold py-1.5 rounded text-[11px] uppercase tracking-wider">APPLY INCIDENT</button>
+      </div>
     </div>
   `;
+  populateChairSelectors();
+}
+
+let _lastDriverOptionsSignature = null;
+
+function populateChairSelectors(){
+  const front=document.getElementById('chair-overtake-front');
+  const back=document.getElementById('chair-overtake-back');
+  const crash=document.getElementById('chair-crash-driver');
+  const opts = activeDriverOptions();
+
+  if(opts !== _lastDriverOptionsSignature){
+    _lastDriverOptionsSignature = opts;
+    [front, back, crash].forEach(sel=>{
+      if(!sel) return;
+      const prevValue = sel.value;
+      sel.innerHTML = opts;
+      if(prevValue && sel.querySelector(`option[value="${prevValue}"]`)){
+        sel.value = prevValue;
+      }
+    });
+  }
+
+  renderChairOrderList();
+  const lapInput=document.getElementById('chair-lap-count-input');
+  if(lapInput && document.activeElement !== lapInput){
+    lapInput.value = state.maxLaps;
+  }
+  const pauseBtn=document.getElementById('chair-pause-btn');
+  if(pauseBtn){
+    pauseBtn.innerText = state.paused ? '▶ RESUME RACE' : '⏸ PAUSE RACE';
+    pauseBtn.className = 'col-span-2 font-bold py-1.5 rounded text-[11px] uppercase tracking-wider ' +
+      (state.paused ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-amber-600 hover:bg-amber-700 text-black');
+  }
+  const gridBtn = container_gridBtn();
+  if(gridBtn){
+    gridBtn.innerText = state.gridConfirmed ? '✅ STARTING GRID CONFIRMED (RE-CONFIRM)' : '✅ CONFIRM STARTING GRID';
+    gridBtn.className = 'w-full font-bold py-1.5 rounded text-[10px] uppercase tracking-wider ' + (state.gridConfirmed ? 'bg-emerald-700 hover:bg-emerald-600 text-white' : 'bg-sky-700 hover:bg-sky-600 text-white');
+  }
+}
+function container_gridBtn(){
+  const btns = document.querySelectorAll('#workspace-container button');
+  for(const b of btns){ if(b.getAttribute('onclick')==='confirmStartingGrid()') return b; }
+  return null;
+}
+
+function renderChairOrderList(){
+  const list=document.getElementById('chair-order-list');
+  if(!list) return;
+  const sorted=[...state.drivers].filter(d=>!d.isDSQ && !d.status.startsWith('DNF')).sort(raceSort);
+  list.innerHTML='';
+  sorted.forEach((d,i)=>{
+    const row=document.createElement('div');
+    row.className='flex items-center justify-between bg-neutral-900/60 px-2 py-1 rounded text-[11px]';
+    row.innerHTML=`<span class="text-white font-bold w-6 pos-font">${i+1}</span>
+      <span class="flex-1 text-neutral-300 driver-font">${d.abbr}</span>
+      <div class="flex space-x-1">
+        <button onclick="chairMoveDriver('${d.abbr}',-1)" class="bg-neutral-800 hover:bg-neutral-700 px-2 rounded text-white">▲</button>
+        <button onclick="chairMoveDriver('${d.abbr}',1)" class="bg-neutral-800 hover:bg-neutral-700 px-2 rounded text-white">▼</button>
+      </div>`;
+    list.appendChild(row);
+  });
+}
+
+function chairMoveDriver(abbr, dir){
+  const sorted=[...state.drivers].filter(d=>!d.isDSQ && !d.status.startsWith('DNF')).sort(raceSort);
+  const idx=sorted.findIndex(d=>d.abbr===abbr);
+  const swapIdx = idx+dir;
+  if(swapIdx<0 || swapIdx>=sorted.length) return;
+  const a=sorted[idx], b=sorted[swapIdx];
+  const tmp=a.totalDistance; a.totalDistance=b.totalDistance; b.totalDistance=tmp;
+  a.totalDistance += dir<0 ? 0.0005 : -0.0005;
+  a.progress = ((a.progress||0) + (dir<0?0.0005:-0.0005) + 1) % 1;
+  state.logs.push({time:getTimestamp(),sender:currentSubRole,message:`👑 CHAIR: Order manually updated (${abbr} ${dir<0?'moved up':'moved down'}).`});
+  render();
+  pushState();
+}
+
+function confirmStartingGrid(){
+  const sorted=[...state.drivers].filter(d=>!d.isDSQ && !d.status.startsWith('DNF')).sort(raceSort);
+  sorted.forEach((d,i)=>{
+    const p = gridStartProgress(i, sorted.length);
+    d.progress = p;
+    d.totalDistance = p;
+    d._lastProgress = p;
+    d.lastCrossTick = state.tickCount||0;
+  });
+  state.gridConfirmed = true;
+  state.logs.push({time:getTimestamp(),sender:currentSubRole,message:'🏳️ CHAIR: Starting grid confirmed. Ready for start lights.'});
+  render();
+  pushState();
+}
+
+function chairForceOvertake(){
+  const frontAbbr=document.getElementById('chair-overtake-front').value; 
+  const backAbbr=document.getElementById('chair-overtake-back').value;   
+  const text=document.getElementById('chair-overtake-text').value.trim();
+  if(frontAbbr===backAbbr){ showModal('ERROR','You selected the same car.','border-red-600','text-red-500'); return; }
+  const front=state.drivers.find(d=>d.abbr===frontAbbr);
+  const back=state.drivers.find(d=>d.abbr===backAbbr);
+  if(!front||!back) return;
+  back.progress = (front.progress + 0.004) % 1;
+  back.totalDistance = (front.totalDistance||0) + 0.004;
+  state.logs.push({time:getTimestamp(),sender:currentSubRole,message: text || `👑 CHAIR: ${back.abbr} passed ahead of ${front.abbr}.`});
+  document.getElementById('chair-overtake-text').value='';
+  render();
+  pushState();
+}
+
+function chairTriggerCrash(){
+  const abbr=document.getElementById('chair-crash-driver').value;
+  const text=document.getElementById('chair-crash-text').value.trim();
+  const typeChoice=document.getElementById('chair-crash-type').value;
+  const driver=state.drivers.find(d=>d.abbr===abbr);
+  if(!driver) return;
+  if(!text){ showModal('MISSING DESCRIPTION','Please write the incident description.','border-red-600','text-red-500'); return; }
+
+  driver.status = typeChoice;
+  if(typeChoice==='PIT'){ driver.tyreWear = 100; }
+  state.logs.push({time:getTimestamp(),sender:currentSubRole,message:text});
+  document.getElementById('chair-crash-text').value='';
+
+  if(typeChoice!=='PIT'){
+    document.getElementById('po-title').innerText = typeChoice==='DNF_CRASH' ? 'CRASH / DNF' : 'ENGINE FAILURE / DNF';
+    document.getElementById('po-name').innerText = `${driver.fname} ${driver.lname}`;
+    const ov=document.getElementById('penalty-overlay');
+    ov.classList.remove('hidden'); ov.style.display='flex';
+    setTimeout(()=>{ov.style.display='none'; ov.classList.add('hidden');},6000);
+  } else {
+    setTimeout(()=>{
+      const d=state.drivers.find(x=>x.abbr===abbr);
+      if(d && d.status==='PIT'){
+        d.status='OK'; d.tyreWear=0;
+        state.logs.push({time:getTimestamp(),sender:'SYSTEM',message:`🟢 ${d.fname} ${d.lname} returned to the track after damage inspection.`});
+        render();
+        pushState();
+      }
+    },6000);
+  }
+  render();
+  pushState();
+}
+
+function getChosenLapCount(fallback){
+  const input = document.getElementById('chair-lap-count-input');
+  if(!input) return fallback;
+  const val = parseInt(input.value, 10);
+  if(!Number.isFinite(val) || val < 1 || val > 200) return null;
+  return val;
+}
+
+function applyLapCountOnly(){
+  const val = getChosenLapCount(null);
+  if(val === null){ showModal('INVALID VALUE','Please enter a valid lap count between 1 and 200.','border-red-600','text-red-500'); return; }
+  state.maxLaps = val;
+  state.logs.push({time:getTimestamp(),sender:currentSubRole,message:`👑 CHAIR: Total lap count updated to ${val}.`});
+  render();
+  pushState();
+}
+
+function toggleRacePause(){
+  state.paused = !state.paused;
+  state.logs.push({time:getTimestamp(),sender:currentSubRole,message: state.paused ? '⏸ CHAIR: Race paused.' : '▶ CHAIR: Race resumed.'});
+  render();
+  pushState();
+}
+
+function resetSimulation(){
+  const chosen = getChosenLapCount(78);
+  if(chosen === null){ showModal('INVALID VALUE','Please enter a valid lap count between 1 and 200.','border-red-600','text-red-500'); return; }
+  const laps = chosen;
+  state = {
+    lap:1, maxLaps: laps, flagStatus:'NORMAL', yellowSector:null,
+    paused: false,
+    gridConfirmed: false,
+    tickCount: 0,
+    fastestLap: {abbr:null, timeSec:null},
+    raceFinished: false,
+    drivers: freshDrivers(),
+    logs:[{time:getTimestamp(),sender:'SYSTEM',message:`Simulation reset. Race set to ${laps} laps, all drivers returned to the starting grid.`}],
+    stewardIncidents:[],
+    _v: (state._v||0) + 1
+  };
+  render();
+  pushState();
+  showModal('RACE RESET', `All simulation states and all 22 driver records have been completely reset.\nTotal Laps: ${laps}`, 'border-red-600','text-red-500');
 }
 
 function renderDirectorWorkspace(container){
@@ -753,20 +1087,140 @@ function renderDirectorWorkspace(container){
     <div class="flex flex-col h-full space-y-3">
       <h3 class="f1b text-sm tracking-widest text-red-500 border-b border-neutral-800 pb-2 uppercase">RACE DIRECTOR (${currentSubRole})</h3>
       <div class="grid grid-cols-2 gap-2">
+        <button onclick="showLights()" class="bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 rounded text-[11px] uppercase">🚦 START LIGHTS</button>
+        <button onclick="extinguishLightsAndStart()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 rounded text-[11px] uppercase">🏁 EXTINGUISH</button>
         <button onclick="changeTrackFlag('GREEN')" class="bg-emerald-700 hover:bg-emerald-600 text-white font-bold py-1.5 rounded text-[11px] uppercase">🟢 GREEN</button>
         <button onclick="changeTrackFlag('VSC')" class="bg-amber-500 hover:bg-amber-600 text-black font-bold py-1.5 rounded text-[11px] uppercase">⏱️ VSC</button>
         <button onclick="changeTrackFlag('SC')" class="bg-amber-600 hover:bg-amber-700 text-black font-bold py-1.5 rounded text-[11px] uppercase">🚓 SC</button>
         <button onclick="changeTrackFlag('RED')" class="bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 rounded text-[11px] uppercase">🔴 RED</button>
       </div>
+      <div class="border border-neutral-800 p-2.5 rounded bg-black/40">
+        <span class="text-[10px] text-neutral-500 font-bold uppercase block mb-1.5">Sector Yellow Flag</span>
+        <div class="grid grid-cols-3 gap-2">
+          <button onclick="triggerSectorYellow(1)" class="bg-neutral-900 border border-amber-500/30 text-amber-500 text-[10px] py-1 rounded font-bold">SECTOR 1</button>
+          <button onclick="triggerSectorYellow(2)" class="bg-neutral-900 border border-amber-500/30 text-amber-500 text-[10px] py-1 rounded font-bold">SECTOR 2</button>
+          <button onclick="triggerSectorYellow(3)" class="bg-neutral-900 border border-amber-500/30 text-amber-500 text-[10px] py-1 rounded font-bold">SECTOR 3</button>
+        </div>
+      </div>
+      <div class="border border-neutral-800 p-2.5 rounded bg-black/40 space-y-2">
+        <span class="text-[10px] text-neutral-500 font-bold uppercase block">PENALTY REFERRAL</span>
+        <div class="text-white text-xs font-bold" id="sel-driver-txt">Driver: ${selectedDriver||'Not selected (click on map)'}</div>
+        <select id="rd-penalty-type" class="w-full bg-black border border-neutral-800 text-white px-2 py-1 rounded text-[11px]">
+          <option value="5">5 SECOND PENALTY</option>
+          <option value="10">10 SECOND PENALTY</option>
+          <option value="15">15 SECOND PENALTY</option>
+          <option value="20">20 SECOND PENALTY</option>
+          <option value="30">30 SECOND PENALTY</option>
+          <option value="DSQ">DISQUALIFICATION (DSQ)</option>
+          <option value="REPRIMAND">REPRIMAND (NO TIME PENALTY)</option>
+        </select>
+        <button onclick="submitRDIncident()" class="w-full bg-neutral-900 hover:bg-neutral-800 text-[10px] font-bold py-1.5 rounded border border-neutral-800">REFER TO STEWARDS ROOM</button>
+        <div id="rd-incident-queue" class="text-[9px] text-neutral-500 font-bold uppercase pt-1"></div>
+      </div>
     </div>`;
+}
+
+function submitRDIncident(){
+  if(!selectedDriver){ showModal('MISSING SELECTION','Please select a driver from the left order panel.','border-red-600','text-red-500'); return; }
+  const driver=state.drivers.find(d=>d.abbr===selectedDriver);
+  if(!driver){ return; }
+  if(driver.isDSQ || driver.status.startsWith('DNF')){ showModal('RULE VIOLATION','An incident cannot be referred for a car that is already out of the race.','border-red-600','text-red-500'); return; }
+  const penaltySel = document.getElementById('rd-penalty-type');
+  const raw = penaltySel ? penaltySel.value : '5';
+
+  let penaltyKind='TIME', penaltySeconds=0, penaltyType='';
+  if(raw==='DSQ'){ penaltyKind='DSQ'; penaltyType='DISQUALIFICATION'; }
+  else if(raw==='REPRIMAND'){ penaltyKind='REPRIMAND'; penaltyType='REPRIMAND (NO TIME)'; }
+  else { penaltySeconds=parseInt(raw,10)||5; penaltyKind='TIME'; penaltyType=`${penaltySeconds} SECONDS`; }
+
+  state.stewardIncidents.push({
+    id:Math.random().toString(36).slice(2,9),
+    driverAbbr:selectedDriver,
+    driverName:`${driver.fname} ${driver.lname}`,
+    penaltyType, penaltyKind, penaltySeconds,
+    votes:{}, status:'PENDING'
+  });
+  state.logs.push({time:getTimestamp(),sender:currentSubRole,message:`⚖️ INVESTIGATION REFERRAL: A ${penaltyType} request for ${driver.fname} ${driver.lname} has been referred to the Stewards Room.`});
+  render();
+  pushState();
 }
 
 function renderStewardWorkspace(container){
   container.innerHTML = `
     <div class="flex flex-col h-full space-y-3">
       <h3 class="f1b text-sm tracking-widest text-emerald-500 border-b border-neutral-800 pb-2 uppercase">STEWARDS ROOM (${currentSubRole})</h3>
-      <div class="text-xs text-neutral-400">Panel active. Monitor racing incidents.</div>
+      <div id="steward-active-incident" class="bg-black/60 p-3 rounded border border-neutral-800 flex-1 flex flex-col justify-center items-center text-center"></div>
+      <div class="grid grid-cols-2 gap-2 mt-auto">
+        <button id="steward-guilty-btn" onclick="voteStewardIncident('GUILTY')" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-2 rounded uppercase">GUILTY / APPROVE PENALTY</button>
+        <button onclick="voteStewardIncident('NOT_GUILTY')" class="bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-bold py-2 rounded uppercase">RACING INCIDENT / NO PENALTY</button>
+      </div>
     </div>`;
+}
+
+// Actually applies an approved time penalty to a driver: adds it to their
+// running penalty total (shown as a badge) and converts the seconds into an
+// equivalent distance deduction so the classification / gap immediately
+// reflects it.
+function applyPenaltyToDriver(abbr, seconds){
+  const d = state.drivers.find(x=>x.abbr===abbr);
+  if(!d || !seconds) return;
+  d.penaltySeconds = (d.penaltySeconds||0) + seconds;
+  d.penalty = `${d.penaltySeconds}s`;
+  const distancePenalty = seconds / LAP_SECONDS;
+  d.totalDistance = (d.totalDistance||0) - distancePenalty;
+}
+
+// Applies a disqualification: the driver is immediately removed from the
+// classification (badged DSQ, greyed out, excluded from gaps/leaderboard
+// ordering via gapTextFor) but their car stays visible on track until it
+// naturally gets lapped/pulled in.
+function applyDSQToDriver(abbr){
+  const d = state.drivers.find(x=>x.abbr===abbr);
+  if(!d) return;
+  d.isDSQ = true;
+}
+
+// Abu Dhabi's panel has 4 stewards, so a REAL majority (3 of 4) is needed
+// to decide an incident instead of a single-steward decision.
+const STEWARD_MAJORITY_NEEDED = Math.floor(Object.keys(STEWARDS).length/2) + 1;
+
+function pendingIncident(){
+  return state.stewardIncidents.find(i=>i.status==='PENDING');
+}
+
+function voteStewardIncident(vote){
+  const pending=pendingIncident();
+  if(!pending){ showModal('NONE','There is no active incident to vote on.','border-neutral-500','text-neutral-500'); return; }
+  if(!currentSubRole){ return; }
+
+  pending.votes[currentSubRole]=vote;
+  state.logs.push({time:getTimestamp(),sender:currentSubRole,message:`⚖️ Steward ${currentSubRole} voted "${vote==='GUILTY'?'GUILTY':'RACING INCIDENT'}" on the ${pending.driverName} incident.`});
+
+  const totalStewards = Object.keys(STEWARDS).length;
+  const votes=Object.values(pending.votes);
+  const guilty=votes.filter(v=>v==='GUILTY').length;
+  const notGuilty=votes.length-guilty;
+
+  const decisive = guilty>=STEWARD_MAJORITY_NEEDED || notGuilty>=STEWARD_MAJORITY_NEEDED || votes.length>=totalStewards;
+  if(!decisive){ render(); pushState(); return; }
+
+  if(guilty>notGuilty){
+    pending.status='APPROVED';
+    if(pending.penaltyKind==='DSQ'){
+      applyDSQToDriver(pending.driverAbbr);
+      state.logs.push({time:getTimestamp(),sender:'STEWARDS PANEL',message:`🚨 OFFICIAL DECISION: ${pending.driverName} has been DISQUALIFIED from the race!`});
+    } else if(pending.penaltyKind==='REPRIMAND'){
+      state.logs.push({time:getTimestamp(),sender:'STEWARDS PANEL',message:`🚨 OFFICIAL DECISION: ${pending.driverName} has been issued a formal reprimand. No time penalty applied.`});
+    } else {
+      applyPenaltyToDriver(pending.driverAbbr, pending.penaltySeconds || 5);
+      state.logs.push({time:getTimestamp(),sender:'STEWARDS PANEL',message:`🚨 OFFICIAL DECISION: ${pending.penaltyType} penalty approved and applied to ${pending.driverName}!`});
+    }
+  } else {
+    pending.status='DISMISSED';
+    state.logs.push({time:getTimestamp(),sender:'STEWARDS PANEL',message:`🛡️ OFFICIAL DECISION: The ${pending.driverName} incident was closed as a 'Racing Incident'.`});
+  }
+  render();
+  pushState();
 }
 
 function renderTPWorkspace(container){
@@ -774,81 +1228,422 @@ function renderTPWorkspace(container){
   container.innerHTML = `
     <div class="flex flex-col h-full space-y-3">
       <h3 class="f1b text-sm tracking-widest uppercase border-b border-neutral-800 pb-2" style="color:${teamData.color}">${teamData.name} PIT WALL</h3>
-      <div id="tp-drivers-container" class="space-y-3"></div>
+      <div class="bg-black/40 p-2.5 rounded border border-neutral-800 space-y-2">
+        <span class="text-[10px] text-neutral-400 font-bold uppercase block">TEAM DRIVER PIT STRATEGY</span>
+        <div id="tp-drivers-container" class="space-y-3"></div>
+      </div>
     </div>`;
   renderTPDrivers();
 }
-
-function renderTVWorkspace(container){
-  container.innerHTML = `
-    <div class="flex flex-col h-full space-y-3">
-      <h3 class="f1b text-sm tracking-widest text-sky-400 border-b border-neutral-800 pb-2 uppercase">LIVE BROADCAST FEED</h3>
-      <div class="text-xs text-neutral-400">Broadcast telemetries synced live.</div>
-    </div>`;
-}
-
 function renderTPDrivers(){
   const container=document.getElementById('tp-drivers-container');
   if(!container) return;
   const teamDrivers=state.drivers.filter(d=>d.team===currentSubRole);
+  const preservedTireChoice = {};
+  teamDrivers.forEach(d=>{
+    const existing = document.getElementById(`tire-choice-${d.abbr}`);
+    if(existing) preservedTireChoice[d.abbr] = existing.value;
+  });
   container.innerHTML='';
   teamDrivers.forEach(d=>{
     const div=document.createElement('div');
-    div.className='flex items-center justify-between bg-black/60 p-2 rounded border border-neutral-800 text-xs';
-    div.innerHTML=`
-      <div class="flex items-center space-x-2">
-        <span class="font-bold driver-font text-white">${d.fname} ${d.lname} (${d.abbr})</span>
-        <span class="text-[10px] text-neutral-400">Tire: ${d.tire} (${Math.floor(d.tyreWear||0)}%)</span>
-      </div>
-      <button onclick="requestPitStop('${d.abbr}')" class="bg-sky-600 hover:bg-sky-500 text-white px-2 py-1 rounded font-bold text-[10px] uppercase">BOX THIS LAP</button>
-    `;
+    div.className='flex items-center justify-between border-b border-neutral-900 pb-3 last:border-b-0 text-xs';
+    const pitLabel = d.status==='PIT' ? '<span class="text-sky-400 font-bold animate-pulse ml-1">(IN THE PIT BOX - CHANGING TIRES)</span>' : '';
+    const chosen = preservedTireChoice[d.abbr] || 'S';
+    div.innerHTML=`<div><span class="font-bold text-white block driver-font">${d.fname} ${d.lname} (${d.abbr})</span>
+      <span class="text-[10px] text-neutral-400 tel-font">Tire: <span class="font-bold">${d.tire}</span> (Wear %${Math.floor(d.tyreWear||0)}) - Status: ${d.status}</span>${pitLabel}</div>
+      <div class="flex space-x-1.5">
+        <select id="tire-choice-${d.abbr}" class="bg-black border border-neutral-800 text-white px-2 py-1 rounded text-[11px]" ${d.status==='PIT'?'disabled':''}>
+          <option value="S" ${chosen==='S'?'selected':''}>Soft (S)</option><option value="M" ${chosen==='M'?'selected':''}>Medium (M)</option><option value="H" ${chosen==='H'?'selected':''}>Hard (H)</option>
+        </select>
+        <button onclick="triggerTPPitstop('${d.abbr}')" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1 rounded text-[10px] uppercase" ${d.status==='PIT'?'disabled':''}>BOX</button>
+      </div>`;
     container.appendChild(div);
   });
 }
+function triggerTPPitstop(abbr){
+  const sel=document.getElementById(`tire-choice-${abbr}`); if(!sel) return;
+  const driver=state.drivers.find(d=>d.abbr===abbr);
+  if(!driver) return;
+  if(driver.status.startsWith('DNF')||driver.isDSQ){ showModal('RULE VIOLATION','A pit stop cannot be applied to a car that is out of the race.','border-red-600','text-red-500'); return; }
+  if(driver.status==='PIT'){ return; }
+  const newTire = sel.value;
+  driver.status='PIT';
+  state.logs.push({time:getTimestamp(),sender:currentSubRole,message:`🔧 ${driver.fname} ${driver.lname} entered the pits, changing tires... (New tire: [${newTire}])`});
+  render();
+  pushState();
+  const pitDuration = PIT_STOP_MIN_MS + Math.random()*(PIT_STOP_MAX_MS - PIT_STOP_MIN_MS);
+  setTimeout(()=>{
+    const d=state.drivers.find(x=>x.abbr===abbr);
+    if(d && d.status==='PIT'){
+      d.status='OK'; d.tire=newTire; d.tyreWear=0; d.tireLifeLaps=randomTireLife(newTire);
+      state.logs.push({time:getTimestamp(),sender:'SYSTEM',message:`🟢 ${d.fname} ${d.lname} exited the pits back into clean air. (Tire: [${newTire}])`});
+      render();
+      pushState();
+    }
+  }, pitDuration);
+}
 
-function requestPitStop(abbr){
-  const d=state.drivers.find(x=>x.abbr===abbr);
-  if(d){
-    d.status='PIT';
-    d.tyreWear=0;
-    state.logs.push({time:getTimestamp(),sender:currentSubRole,message:`🔧 ${d.abbr} boxed for fresh tyres.`});
-    setTimeout(()=>{ d.status='OK'; render(); }, 4000);
-    render();
+function renderTVWorkspace(container){
+  container.innerHTML = `<div class="flex flex-col h-full justify-center items-center text-center space-y-4 p-8">
+    <span class="inline-block w-4 h-4 rounded-full bg-red-600 animate-ping"></span>
+    <h3 class="f1b text-lg tracking-widest text-white uppercase">ABU DHABI PRO TV BROADCAST STANDBY</h3>
+    <p class="text-xs text-neutral-400 max-w-xs leading-relaxed">This screen is for delegates to simultaneously watch the entire race and radio communications.</p></div>`;
+}
+
+function syncWorkspace(){
+  if(currentRole==='chair') populateChairSelectors();
+  else if(currentRole==='director'){
+    const el=document.getElementById('sel-driver-txt');
+    if(el) el.innerText='Driver: '+(selectedDriver||'Not selected');
+    const queueEl=document.getElementById('rd-incident-queue');
+    if(queueEl){
+      const pendingCount = state.stewardIncidents.filter(i=>i.status==='PENDING').length;
+      queueEl.innerText = pendingCount>0 ? `⏳ ${pendingCount} incident(s) awaiting the Stewards Room` : '';
+    }
+  }
+  else if(currentRole==='steward'){
+    const pending=pendingIncident();
+    const div=document.getElementById('steward-active-incident');
+    const guiltyBtn=document.getElementById('steward-guilty-btn');
+    if(div){
+      if(pending){
+        const votes=pending.votes;
+        const voters=Object.keys(votes).join(', ')||'No votes yet';
+        const guiltyCount=Object.values(votes).filter(v=>v==='GUILTY').length;
+        const notGuiltyCount=Object.values(votes).length-guiltyCount;
+        const otherPending = state.stewardIncidents.filter(i=>i.status==='PENDING').length - 1;
+        div.innerHTML=`<span class="text-red-500 font-bold uppercase block mb-1 text-xs">INCIDENT UNDER REVIEW</span>
+          <p class="text-xs font-bold text-white">${pending.driverName} - ${pending.penaltyType} Requested</p>
+          <p class="text-[9px] text-neutral-400 mt-1.5">Stewards Who Voted: ${voters}</p>
+          <p class="text-[9px] text-neutral-500 mt-1">${guiltyCount} GUILTY / ${notGuiltyCount} RACING INCIDENT &mdash; ${STEWARD_MAJORITY_NEEDED} vote(s) needed to decide</p>
+          ${votes[currentSubRole] ? `<p class="text-[9px] text-emerald-500 mt-1 font-bold uppercase">Your vote: ${votes[currentSubRole]==='GUILTY'?'GUILTY':'RACING INCIDENT'} (you can change it until a decision is reached)</p>` : ''}
+          ${otherPending>0 ? `<p class="text-[9px] text-amber-500 mt-1">⏳ ${otherPending} more incident(s) waiting in queue</p>` : ''}`;
+      } else {
+        div.innerHTML=`<span class="text-neutral-500 text-xs font-bold uppercase">No Active Incident Under Review.</span>`;
+      }
+    }
+    if(guiltyBtn){
+      guiltyBtn.innerText = pending && pending.penaltyKind==='DSQ' ? 'GUILTY / DISQUALIFY'
+        : pending && pending.penaltyKind==='REPRIMAND' ? 'GUILTY / REPRIMAND'
+        : 'GUILTY / APPROVE PENALTY';
+    }
+  } else if(currentRole==='team_principal'){ renderTPDrivers(); }
+}
+
+function showLights(){
+  if(!state.gridConfirmed){
+    showModal('GRID NOT CONFIRMED','Please arrange the starting grid in the MANUAL ORDER EDITING panel and press "CONFIRM STARTING GRID" before showing the start lights.','border-sky-500','text-sky-400');
+    return;
+  }
+  state.flagStatus='STARTING';
+  state.logs.push({time:getTimestamp(),sender:currentSubRole,message:'🚦 START PROCEDURE: 5 Red Light System preparing!'});
+  render();
+  pushState();
+  const lights=document.getElementById('start-lights');
+  lights.classList.remove('hidden'); lights.classList.add('grid');
+  for(let i=1;i<=5;i++) document.getElementById('l'+i).style.backgroundColor='#220000';
+  let count=1;
+  if(lightInterval) clearInterval(lightInterval);
+  lightInterval=setInterval(()=>{
+    if(count<=5){ document.getElementById('l'+count).style.backgroundColor='var(--f1-red)'; count++; }
+    else clearInterval(lightInterval);
+  },1000);
+}
+function extinguishLightsAndStart(){
+  clearInterval(lightInterval);
+  const lights=document.getElementById('start-lights');
+  for(let i=1;i<=5;i++) document.getElementById('l'+i).style.backgroundColor='#220000';
+  setTimeout(()=>{ lights.classList.add('hidden'); lights.classList.remove('grid'); },500);
+  state.flagStatus='GREEN';
+  state.logs.push({time:getTimestamp(),sender:currentSubRole,message:'🟢 LIGHTS OUT AND THE ABU DHABI GRAND PRIX HAS BEGUN!'});
+  render();
+  pushState();
+}
+function applyRedFlagGrid() {
+  const activeSorted = [...state.drivers]
+    .filter(d => !d.isDSQ && !d.status.startsWith('DNF') && d.status !== 'PIT')
+    .sort(raceSort);
+
+  activeSorted.forEach((d, i) => {
+    const newProgress = 0.99 - (i * 0.015);
+    const delta = newProgress - d.progress;
+    d.progress = newProgress;
+    d.totalDistance = (d.totalDistance||0) + delta;
+  });
+}
+function changeTrackFlag(f){
+  state.flagStatus=f; state.yellowSector=null;
+  if(f === 'RED') applyRedFlagGrid(); 
+  state.logs.push({time:getTimestamp(),sender:currentSubRole,message:`📢 Flag status updated: [${f} FLAG]`});
+  render();
+  pushState();
+}
+function triggerSectorYellow(sec){
+  state.flagStatus='YELLOW'; state.yellowSector=sec;
+  state.logs.push({time:getTimestamp(),sender:currentSubRole,message:`📢 SECTOR ${sec} YELLOW FLAG: Local danger on track!`});
+  render();
+  pushState();
+}
+
+function simulationTick(){
+  if(!isLeader) return; // Only the elected "broadcast" client drives the physics; everyone else just displays synced state.
+
+  const f=state.flagStatus;
+  if(f==='RED'||f==='STARTING') { render(); return; }
+  if(state.paused) { render(); return; }
+
+  state.tickCount = (state.tickCount||0) + 1;
+
+  const noOvertakeZone = (f==='SC'||f==='VSC'||f==='RED');
+  const speedScale = f==='VSC'?0.35 : f==='SC'?0.45 : 1.0;
+
+  const activeCars = state.drivers.filter(d => !d.isDSQ && !d.status.startsWith('DNF') && d.status !== 'PIT');
+
+  state.drivers.forEach(d => {
+    if (d.status.startsWith('DNF') && !d.hidden) {
+      if (!d.passedBy) {
+        d.passedBy = new Set();
+        activeCars.forEach(a => { if (a.progress > d.progress) d.passedBy.add(a.abbr); });
+      }
+      
+      activeCars.forEach(a => {
+        if ((a._lastProgress <= d.progress && a.progress >= d.progress) || (a.progress < a._lastProgress)) {
+          d.passedBy.add(a.abbr);
+        }
+      });
+
+      if (d.passedBy.size >= activeCars.length && !d.hideTimerStarted && activeCars.length > 0) {
+        d.hideTimerStarted = true;
+        setTimeout(() => {
+          d.hidden = true; 
+          render();
+          pushState();
+        }, 1000);
+      }
+    }
+  });
+
+  state.drivers.forEach(d=>{
+    if(d.isDSQ || d.status.startsWith('DNF') || d.status==='PIT') return;
+
+    const tireData = TIRE_DATA[d.tire] || TIRE_DATA.M;
+    if(!d.tireLifeLaps) d.tireLifeLaps = randomTireLife(d.tire);
+    const wearIncrement = 100 / (d.tireLifeLaps * TICKS_PER_LAP);
+    d.tyreWear = Math.min(100, (d.tyreWear||0) + wearIncrement);
+
+    let localScale = speedScale;
+    if(f==='YELLOW' && state.yellowSector){
+      const carSector = Math.floor(d.progress*3)+1;
+      if(carSector === state.yellowSector) localScale = 0.3;
+    }
+
+    const curve = curvatureAt(d.progress);              
+    const jitter = noOvertakeZone ? 1 : (0.9 + Math.random()*0.2); 
+    const wearPenalty = 1 - (Math.min(100, d.tyreWear||0) / 100) * 0.30;
+
+    const increment = UNIT * curve * d.skill * jitter * localScale * tireData.speedMult * wearPenalty;
+
+    d.progress += increment;
+    d.totalDistance = (d.totalDistance||0) + increment;
+    if(d.progress >= 1){ d.progress -= 1; }
+
+    if(d._lastProgress !== undefined && d.progress < d._lastProgress - 0.5){
+      const lapTicks = state.tickCount - (d.lastCrossTick||0);
+      const lapTimeSec = lapTicks * TICK_MS / 1000;
+      d.lastCrossTick = state.tickCount;
+      if(!state.fastestLap.abbr || lapTimeSec < state.fastestLap.timeSec){
+        state.fastestLap = {abbr:d.abbr, timeSec:lapTimeSec};
+        state.logs.push({time:getTimestamp(), sender:'SYSTEM', message:`⏱ FASTEST LAP: ${d.fname} ${d.lname} - ${lapTimeSec.toFixed(3)}s`});
+      }
+    }
+  });
+
+  const leader = [...state.drivers].filter(d=>!d.isDSQ && !d.status.startsWith('DNF')).sort(raceSort)[0];
+  if(leader && leader._lastProgress !== undefined && leader.progress < leader._lastProgress - 0.5){
+    state.lap += 1;
+    if(state.lap > state.maxLaps){
+      state.flagStatus='RED';
+      state.raceFinished = true;
+      state.logs.push({time:getTimestamp(),sender:'SYSTEM',message:'🏁 CHECKERED FLAG! Abu Dhabi GP MUN Race Simulation completed!'});
+    }
+  }
+  state.drivers.forEach(d=>{ d._lastProgress = d.progress; });
+
+  render();
+  pushState();
+}
+function leaderAbbr(){
+  const l=[...state.drivers].filter(d=>!d.isDSQ && !d.status.startsWith('DNF')).sort(raceSort)[0];
+  return l?l.abbr:null;
+}
+
+function startEngine(){
+  if(tickInterval) clearInterval(tickInterval);
+  tickInterval = setInterval(simulationTick, TICK_MS);
+}
+function stopEngine(){
+  if(tickInterval) clearInterval(tickInterval);
+  tickInterval = null;
+}
+
+// ================= MULTI-SCREEN SYNC (FIREBASE REALTIME DATABASE) =================
+// GitHub Pages is static hosting and has no server/database of its own.
+// So for real-time sync between screens we use a free Firebase Realtime
+// Database project. Fill in the firebaseConfig object below with your own
+// Firebase project's details if you want the Abu Dhabi panel to run on a
+// separate database from the Monaco panel — by default it reuses the same
+// project but writes to its own state path so the two races don't collide.
+
+// ======= FILL THIS IN WITH YOUR OWN FIREBASE PROJECT (or reuse the Monaco one) =======
+const firebaseConfig = {
+  apiKey: "AIzaSyD4plOVNeBupn6jSamX9AZDfkLoTuLYmE4",
+  authDomain: "f1mun-monaco.firebaseapp.com",
+  databaseURL: "https://f1mun-monaco-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "f1mun-monaco",
+  storageBucket: "f1mun-monaco.firebasestorage.app",
+  messagingSenderId: "543752025901",
+  appId: "1:543752025901:web:5d2df24a1b9026318145a4"
+};
+// ===========================================================
+
+const CLIENT_ID = 'c_' + Math.random().toString(36).slice(2,10) + Date.now().toString(36);
+// Separate database path from the Monaco panel so both simulations can run
+// independently without overwriting each other's state.
+const STATE_PATH = 'f1mun/abuDhabiRaceState';
+const LEADER_PATH = 'f1mun/abuDhabiLeaderHeartbeat';
+const SYNC_MS = 700;
+const LEADER_TIMEOUT_MS = 2500;
+const LEADER_SETTLE_MS = 220;
+let isLeader = true;       // the race always starts locally right away
+let syncDisabled = false;  // becomes true if Firebase is unreachable (local-only mode)
+let db = null;
+let firebaseReady = false;
+let applyingRemoteState = false;
+
+function initFirebase(){
+  try{
+    if(!firebaseConfig || !firebaseConfig.apiKey || firebaseConfig.apiKey.includes('BURAYA_')){
+      console.warn('Firebase configuration missing: fill in the firebaseConfig fields. Running in local mode only for now.');
+      firebaseReady = false;
+      syncDisabled = true;
+      return;
+    }
+    firebase.initializeApp(firebaseConfig);
+    db = firebase.database();
+    firebaseReady = true;
+  }catch(e){
+    console.error('Firebase could not be initialized:', e);
+    firebaseReady = false;
+    syncDisabled = true;
   }
 }
 
-function changeTrackFlag(flag){
-  state.flagStatus=flag;
-  state.logs.push({time:getTimestamp(),sender:currentSubRole||'RACE CONTROL',message:`🚩 TRACK STATUS: ${flag}`});
-  render();
+async function pushState(){
+  if(syncDisabled || !firebaseReady || applyingRemoteState) return;
+  try{
+    state._v = (state._v||0) + 1;
+    state._by = CLIENT_ID;
+    state._t = Date.now();
+    await db.ref(STATE_PATH).set(state);
+  }catch(e){ console.error('pushState error:', e); }
 }
 
-function toggleRacePause(){
-  state.paused = !state.paused;
-  state.logs.push({time:getTimestamp(),sender:currentSubRole,message: state.paused ? '⏸ Race paused.' : '▶ Race resumed.'});
-  render();
+async function pullState(){
+  if(syncDisabled || !firebaseReady) return;
+  try{
+    const snap = await db.ref(STATE_PATH).once('value');
+    if(snap.exists()){
+      const remote = snap.val();
+      if((remote._v||0) > (state._v||0)){
+        state = remote;
+        render();
+      }
+    }
+  }catch(e){ /* no shared state yet, which is normal on first load */ }
 }
 
-function applyLapCountOnly(){
-  const input = document.getElementById('chair-lap-count-input');
-  if(input) state.maxLaps = parseInt(input.value) || 78;
-  render();
+// Real-time listener: any change made on one screen is pushed by Firebase
+// to all other connected screens instantly (without waiting for polling).
+function attachRealtimeListener(){
+  if(!firebaseReady) return;
+  db.ref(STATE_PATH).on('value', (snap)=>{
+    if(!snap.exists()) return;
+    const remote = snap.val();
+    if(remote._by === CLIENT_ID) return; // ignore the update we just sent ourselves
+    if((remote._v||0) > (state._v||0)){
+      applyingRemoteState = true;
+      state = remote;
+      render();
+      applyingRemoteState = false;
+    }
+  });
 }
 
-function resetSimulation(){
-  state.drivers = freshDrivers();
-  state.lap = 1;
-  state.flagStatus = 'NORMAL';
-  render();
+async function claimLeadership(){
+  const now = Date.now();
+  await db.ref(LEADER_PATH).set({clientId: CLIENT_ID, ts: now});
+  await new Promise(r=>setTimeout(r, LEADER_SETTLE_MS));
+  try{
+    const snap = await db.ref(LEADER_PATH).once('value');
+    const info = snap.exists() ? snap.val() : null;
+    return !!(info && info.clientId === CLIENT_ID);
+  }catch(e){ return false; }
 }
 
-// Initial initialization for track path calculations
-window.addEventListener('DOMContentLoaded', () => {
-  overlay = document.getElementById('main-track');
-  if(overlay) pathLen = overlay.getTotalLength();
+async function heartbeat(){
+  if(syncDisabled || !firebaseReady) return;
+  try{
+    let leaderInfo = null;
+    try{
+      const snap = await db.ref(LEADER_PATH).once('value');
+      if(snap.exists()) leaderInfo = snap.val();
+    }catch(e){ leaderInfo = null; }
+
+    const now = Date.now();
+    const stale = !leaderInfo || (now - leaderInfo.ts > LEADER_TIMEOUT_MS);
+    const wasLeader = isLeader;
+    let nowLeader;
+
+    if(stale || leaderInfo.clientId === CLIENT_ID){
+      nowLeader = await claimLeadership();
+    } else {
+      nowLeader = false;
+    }
+    isLeader = nowLeader;
+
+    if(isLeader) await pushState();
+
+    if(isLeader && !wasLeader) startEngine();
+    else if(!isLeader && wasLeader) stopEngine();
+
+    updateSyncBadge();
+  }catch(e){ console.error('heartbeat error:', e); }
+}
+
+window.onload = async function(){
+  overlay = document.getElementById('sector-overlay');
+  pathLen = overlay.getTotalLength();
   initCars();
+
+  // The race starts locally immediately, regardless of network/sync status.
+  startEngine();
   render();
-});
+
+  initFirebase();
+  if(!firebaseReady){
+    syncDisabled = true;
+    isLeader = true;
+    updateSyncBadge();
+    return;
+  }
+
+  await pullState();
+  render();
+  attachRealtimeListener();
+  await heartbeat();
+  setInterval(heartbeat, SYNC_MS);
+};
 </script>
 </body>
 </html>
