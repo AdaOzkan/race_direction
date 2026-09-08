@@ -208,6 +208,23 @@ select, input, button { font-family: 'Rajdhani', sans-serif; }
   flex-shrink: 0;
 }
 
+/* DSQ badge (grey banned tag) */
+.dsq-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  height: 15px;
+  background: #52525b;
+  color: #fff;
+  font-family: 'F1Bold', 'Rajdhani', sans-serif;
+  font-weight: 900;
+  font-size: 9px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 @media (max-width: 639px) {
   #start-lights { padding: 0.5rem; gap: 0.4rem; }
   #start-lights .w-8 { width: 1.4rem; height: 1.4rem; }
@@ -248,9 +265,6 @@ select, input, button { font-family: 'Rajdhani', sans-serif; }
         <div>🏎️ Haas Principal: <code class="bg-black px-1 rounded text-gray-400 font-mono">HAS-TP</code></div>
         <div class="border-b border-neutral-800/40 pt-1 pb-1 col-span-full font-bold text-neutral-500 uppercase">STEWARDS:</div>
         <div>⚖️ Steward G. Connelly: <code class="bg-black px-1 rounded font-mono">STW-GARRY</code></div>
-        <div>⚖️ Steward D. Warwick: <code class="bg-black px-1 rounded font-mono">STW-DEREK</code></div>
-        <div>⚖️ Steward J. Abed: <code class="bg-black px-1 rounded font-mono">STW-JOSE</code></div>
-        <div>⚖️ Steward S. Bellot: <code class="bg-black px-1 rounded font-mono">STW-SILVIA</code></div>
       </div>
     </div>
   </div>
@@ -289,6 +303,9 @@ select, input, button { font-family: 'Rajdhani', sans-serif; }
       <div id="dynamic-stripe" class="absolute left-0 top-0 w-1 h-0 transition-all duration-500 z-20"></div>
       <div class="bg-neutral-900 border-b border-neutral-800 py-3 flex justify-center items-center">
         <span class="f1b text-sm text-red-600">F1</span>
+      </div>
+      <div id="leaderboard-mode-toggle" onclick="toggleLeaderboardMode()" title="Click to switch between GAP (to leader) and INTERVAL (to car ahead)" class="bg-neutral-950 border-b border-neutral-800 py-1.5 flex justify-center items-center cursor-pointer hover:bg-neutral-800 transition-colors select-none">
+        <span id="leaderboard-mode-label" class="text-[9px] font-bold uppercase tracking-widest text-neutral-400">GAP</span>
       </div>
       <div id="flag-panel" class="h-0 overflow-hidden transition-all duration-300 flex flex-col bg-neutral-900 text-center">
         <div class="py-1.5 text-xs font-bold uppercase tracking-widest text-black" id="f-title"></div>
@@ -442,15 +459,31 @@ function teamLogoTag(d, sizeClass){
   return `<img src="${src}" class="${cls}" alt="${d.team}" onerror="this.style.visibility='hidden'">`;
 }
 
-const STEWARDS = {GARRY:'Garry Connelly',DEREK:'Derek Warwick',JOSE:'José Abed',SILVIA:'Silvia Bellot'};
+const STEWARDS = {GARRY:'Garry Connelly'};
 
 // Tire compound behaviour: soft is fastest but wears out quickest,
 // hard is slowest but lasts the longest, medium sits in between.
 const TIRE_DATA = {
-  S: { speedMult: 1.045, wearRate: 0.60 },
-  M: { speedMult: 1.000, wearRate: 0.35 },
-  H: { speedMult: 0.965, wearRate: 0.20 }
+  S: { speedMult: 1.045 },
+  M: { speedMult: 1.000 },
+  H: { speedMult: 0.965 }
 };
+
+// Tire life span, in laps, before a tire is fully worn (100% wear).
+// Each driver gets a randomized life within the compound's range whenever
+// they start on / switch to that compound, so not every car on the same
+// compound wears out on exactly the same lap.
+const TIRE_LIFE_RANGES = {
+  S: [12, 20],
+  M: [25, 30],
+  H: [35, 40]
+};
+
+function randomTireLife(compound){
+  const range = TIRE_LIFE_RANGES[compound] || TIRE_LIFE_RANGES.M;
+  const [min, max] = range;
+  return min + Math.random() * (max - min);
+}
 
 // ================= STATE =================
 const LAP_SECONDS = 72;        
@@ -488,7 +521,7 @@ function gridStartProgress(i, total){
 function freshDrivers(){
   return drivers.map((d,i)=>{
     const startProgress = gridStartProgress(i, drivers.length);
-    return {...d, progress: startProgress, totalDistance: startProgress, tyreWear: Math.random()*5, status:'OK', isDSQ:false, penalty:null, penaltySeconds:0, hidden:false, lastCrossTick:0};
+    return {...d, progress: startProgress, totalDistance: startProgress, tyreWear: Math.random()*5, tireLifeLaps: randomTireLife(d.tire), status:'OK', isDSQ:false, penalty:null, penaltySeconds:0, hidden:false, lastCrossTick:0};
   });
 }
 
@@ -525,6 +558,7 @@ function driverBadgesFor(d){
   let out = '';
   if(d.status==='PIT') out += '<span class="pit-badge" title="In the pits">P</span>';
   if(d.penaltySeconds) out += `<span class="penalty-badge" title="Time penalty applied">+${d.penaltySeconds}s</span>`;
+  if(d.isDSQ) out += '<span class="dsq-badge" title="Disqualified">DSQ</span>';
   if(state.fastestLap && state.fastestLap.abbr===d.abbr) out += '<span class="fastest-lap-badge" title="Fastest lap">⏱</span>';
   if(state.raceFinished && !d.isDSQ && !d.status.startsWith('DNF')) out += '<span class="checkered-badge" title="Finished"></span>';
   return out;
@@ -626,7 +660,45 @@ function gapTextFor(sorted, idx){
   return `+${gapSeconds.toFixed(3)}s`;
 }
 
+// ================= LEFT TV LEADERBOARD: GAP / INTERVAL TOGGLE =================
+// GAP = time distance to the race leader (P1).
+// INTERVAL = time distance to the car directly ahead on track.
+// Clicking the small header above the left leaderboard toggles between the two.
+let leaderboardMode = 'GAP'; // 'GAP' | 'INTERVAL'
+
+function toggleLeaderboardMode(){
+  leaderboardMode = leaderboardMode === 'GAP' ? 'INTERVAL' : 'GAP';
+  render();
+}
+
+function updateLeaderboardModeLabel(){
+  const el = document.getElementById('leaderboard-mode-label');
+  if(el) el.innerText = leaderboardMode;
+}
+
+function tvLeaderboardGapText(sorted, idx){
+  const d = sorted[idx];
+  if(d.isDSQ) return 'DSQ';
+  if(d.status==='DNF_CRASH') return 'DNF';
+  if(d.status==='DNF_ENGINE') return 'DNF';
+  if(d.status==='PIT') return 'PIT';
+
+  if(leaderboardMode === 'INTERVAL'){
+    if(idx===0) return '—';
+    const ahead = sorted[idx-1];
+    const intervalSeconds = Math.max(0, ((ahead.totalDistance||0) - (d.totalDistance||0)) * LAP_SECONDS);
+    return `+${intervalSeconds.toFixed(3)}s`;
+  }
+
+  // GAP mode (default): time distance to the leader, P1 shows 0.000s
+  if(idx===0) return '0.000s';
+  const leaderTD = sorted[0].totalDistance || 0;
+  const gapSeconds = Math.max(0, (leaderTD - (d.totalDistance||0)) * LAP_SECONDS);
+  return `+${gapSeconds.toFixed(3)}s`;
+}
+
 function updateTVLeaderboard(){
+  updateLeaderboardModeLabel();
   const grid=document.getElementById('ui-grid'); grid.innerHTML='';
   const sorted=[...state.drivers].sort(raceSort);
   sorted.forEach((d,i)=>{
@@ -634,7 +706,7 @@ function updateTVLeaderboard(){
     row.className='flex items-center h-[26px] bg-neutral-900/60 border-b border-neutral-950 text-xs px-2 cursor-pointer transition-all '+
       (d.isDSQ?' opacity-30':'')+(selectedDriver===d.abbr?' bg-neutral-800 border-l-2 border-red-600':' hover:bg-neutral-850');
     row.onclick=()=>{selectedDriver=d.abbr; render();};
-    const gapText = gapTextFor(sorted, i);
+    const gapText = tvLeaderboardGapText(sorted, i);
     let tireBadge=`<div class="f1-tire tel-font ${tireClassFor(d.tire)}">${d.tire}</div>`;
     if(d.isDSQ) tireBadge='<div class="text-[9px] text-red-500 font-bold tel-font">OUT</div>';
     else if(d.status==='DNF_CRASH') tireBadge='<div class="text-[9px] text-red-500 font-bold tel-font">CRASH</div>';
@@ -1050,8 +1122,14 @@ function renderDirectorWorkspace(container){
         <select id="rd-penalty-type" class="w-full bg-black border border-neutral-800 text-white px-2 py-1 rounded text-[11px]">
           <option value="5">5 SECOND PENALTY</option>
           <option value="10">10 SECOND PENALTY</option>
+          <option value="15">15 SECOND PENALTY</option>
+          <option value="20">20 SECOND PENALTY</option>
+          <option value="30">30 SECOND PENALTY</option>
+          <option value="DSQ">DISQUALIFICATION (DSQ)</option>
+          <option value="REPRIMAND">REPRIMAND (NO TIME PENALTY)</option>
         </select>
         <button onclick="submitRDIncident()" class="w-full bg-neutral-900 hover:bg-neutral-800 text-[10px] font-bold py-1.5 rounded border border-neutral-800">REFER TO STEWARDS ROOM</button>
+        <div id="rd-incident-queue" class="text-[9px] text-neutral-500 font-bold uppercase pt-1"></div>
       </div>
     </div>`;
 }
@@ -1059,10 +1137,24 @@ function renderDirectorWorkspace(container){
 function submitRDIncident(){
   if(!selectedDriver){ showModal('MISSING SELECTION','Please select a driver from the left order panel.','border-red-600','text-red-500'); return; }
   const driver=state.drivers.find(d=>d.abbr===selectedDriver);
+  if(!driver){ return; }
+  if(driver.isDSQ || driver.status.startsWith('DNF')){ showModal('RULE VIOLATION','An incident cannot be referred for a car that is already out of the race.','border-red-600','text-red-500'); return; }
   const penaltySel = document.getElementById('rd-penalty-type');
-  const seconds = penaltySel ? parseInt(penaltySel.value,10) : 5;
-  state.stewardIncidents.push({id:Math.random().toString(36).slice(2,9), driverAbbr:selectedDriver, driverName:`${driver.fname} ${driver.lname}`, penaltyType:`${seconds} SECONDS`, penaltySeconds:seconds, votes:{}, status:'PENDING'});
-  state.logs.push({time:getTimestamp(),sender:currentSubRole,message:`⚖️ INVESTIGATION REFERRAL: A ${seconds}-second penalty request for ${driver.fname} ${driver.lname} has been referred to the Stewards Room.`});
+  const raw = penaltySel ? penaltySel.value : '5';
+
+  let penaltyKind='TIME', penaltySeconds=0, penaltyType='';
+  if(raw==='DSQ'){ penaltyKind='DSQ'; penaltyType='DISQUALIFICATION'; }
+  else if(raw==='REPRIMAND'){ penaltyKind='REPRIMAND'; penaltyType='REPRIMAND (NO TIME)'; }
+  else { penaltySeconds=parseInt(raw,10)||5; penaltyKind='TIME'; penaltyType=`${penaltySeconds} SECONDS`; }
+
+  state.stewardIncidents.push({
+    id:Math.random().toString(36).slice(2,9),
+    driverAbbr:selectedDriver,
+    driverName:`${driver.fname} ${driver.lname}`,
+    penaltyType, penaltyKind, penaltySeconds,
+    votes:{}, status:'PENDING'
+  });
+  state.logs.push({time:getTimestamp(),sender:currentSubRole,message:`⚖️ INVESTIGATION REFERRAL: A ${penaltyType} request for ${driver.fname} ${driver.lname} has been referred to the Stewards Room.`});
   render();
   pushState();
 }
@@ -1073,7 +1165,7 @@ function renderStewardWorkspace(container){
       <h3 class="f1b text-sm tracking-widest text-emerald-500 border-b border-neutral-800 pb-2 uppercase">STEWARDS ROOM (${currentSubRole})</h3>
       <div id="steward-active-incident" class="bg-black/60 p-3 rounded border border-neutral-800 flex-1 flex flex-col justify-center items-center text-center"></div>
       <div class="grid grid-cols-2 gap-2 mt-auto">
-        <button onclick="voteStewardIncident('GUILTY')" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-2 rounded uppercase">GUILTY / APPROVE PENALTY</button>
+        <button id="steward-guilty-btn" onclick="voteStewardIncident('GUILTY')" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-2 rounded uppercase">GUILTY / APPROVE PENALTY</button>
         <button onclick="voteStewardIncident('NOT_GUILTY')" class="bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-bold py-2 rounded uppercase">RACING INCIDENT / NO PENALTY</button>
       </div>
     </div>`;
@@ -1092,23 +1184,59 @@ function applyPenaltyToDriver(abbr, seconds){
   d.totalDistance = (d.totalDistance||0) - distancePenalty;
 }
 
+// Applies a disqualification: the driver is immediately removed from the
+// classification (badged DSQ, greyed out, excluded from gaps/leaderboard
+// ordering via gapTextFor) but their car stays visible on track until it
+// naturally gets lapped/pulled in, matching how the DNF "passedBy" hide
+// logic already works elsewhere.
+function applyDSQToDriver(abbr){
+  const d = state.drivers.find(x=>x.abbr===abbr);
+  if(!d) return;
+  d.isDSQ = true;
+}
+
+// Only ONE steward vote is needed to decide an incident, matching the
+// single-steward login setup used in this build (only one STW- code
+// exists). If more stewards are ever added back, change this to
+// Math.floor(Object.keys(STEWARDS).length/2) + 1 for a real majority vote.
+const STEWARD_MAJORITY_NEEDED = 1;
+
+function pendingIncident(){
+  return state.stewardIncidents.find(i=>i.status==='PENDING');
+}
+
 function voteStewardIncident(vote){
-  const pending=state.stewardIncidents.find(i=>i.status==='PENDING');
+  const pending=pendingIncident();
   if(!pending){ showModal('NONE','There is no active incident to vote on.','border-neutral-500','text-neutral-500'); return; }
+  if(!currentSubRole){ return; }
+
   pending.votes[currentSubRole]=vote;
-  state.logs.push({time:getTimestamp(),sender:currentSubRole,message:`⚖️ Steward ${currentSubRole} voted on the ${pending.driverName} incident.`});
+  state.logs.push({time:getTimestamp(),sender:currentSubRole,message:`⚖️ Steward ${currentSubRole} voted "${vote==='GUILTY'?'GUILTY':'RACING INCIDENT'}" on the ${pending.driverName} incident.`});
+
+  const totalStewards = Object.keys(STEWARDS).length; // 1
   const votes=Object.values(pending.votes);
-  if(votes.length>=2){
-    const guilty=votes.filter(v=>v==='GUILTY').length;
-    const notGuilty=votes.length-guilty;
-    if(guilty>notGuilty){
-      pending.status='APPROVED';
+  const guilty=votes.filter(v=>v==='GUILTY').length;
+  const notGuilty=votes.length-guilty;
+
+  // Only resolve once a side has secured an unbeatable majority (>=
+  // STEWARD_MAJORITY_NEEDED), or every steward has voted.
+  const decisive = guilty>=STEWARD_MAJORITY_NEEDED || notGuilty>=STEWARD_MAJORITY_NEEDED || votes.length>=totalStewards;
+  if(!decisive){ render(); pushState(); return; }
+
+  if(guilty>notGuilty){
+    pending.status='APPROVED';
+    if(pending.penaltyKind==='DSQ'){
+      applyDSQToDriver(pending.driverAbbr);
+      state.logs.push({time:getTimestamp(),sender:'STEWARDS PANEL',message:`🚨 OFFICIAL DECISION: ${pending.driverName} has been DISQUALIFIED from the race!`});
+    } else if(pending.penaltyKind==='REPRIMAND'){
+      state.logs.push({time:getTimestamp(),sender:'STEWARDS PANEL',message:`🚨 OFFICIAL DECISION: ${pending.driverName} has been issued a formal reprimand. No time penalty applied.`});
+    } else {
       applyPenaltyToDriver(pending.driverAbbr, pending.penaltySeconds || 5);
       state.logs.push({time:getTimestamp(),sender:'STEWARDS PANEL',message:`🚨 OFFICIAL DECISION: ${pending.penaltyType} penalty approved and applied to ${pending.driverName}!`});
-    } else {
-      pending.status='DISMISSED';
-      state.logs.push({time:getTimestamp(),sender:'STEWARDS PANEL',message:`🛡️ OFFICIAL DECISION: The ${pending.driverName} incident was closed as a 'Racing Incident'.`});
     }
+  } else {
+    pending.status='DISMISSED';
+    state.logs.push({time:getTimestamp(),sender:'STEWARDS PANEL',message:`🛡️ OFFICIAL DECISION: The ${pending.driverName} incident was closed as a 'Racing Incident'.`});
   }
   render();
   pushState();
@@ -1169,7 +1297,7 @@ function triggerTPPitstop(abbr){
   setTimeout(()=>{
     const d=state.drivers.find(x=>x.abbr===abbr);
     if(d && d.status==='PIT'){
-      d.status='OK'; d.tire=newTire; d.tyreWear=0;
+      d.status='OK'; d.tire=newTire; d.tyreWear=0; d.tireLifeLaps=randomTireLife(newTire);
       state.logs.push({time:getTimestamp(),sender:'SYSTEM',message:`🟢 ${d.fname} ${d.lname} exited the pits back into clean air. (Tire: [${newTire}])`});
       render();
       pushState();
@@ -1186,19 +1314,40 @@ function renderTVWorkspace(container){
 
 function syncWorkspace(){
   if(currentRole==='chair') populateChairSelectors();
-  else if(currentRole==='director'){ const el=document.getElementById('sel-driver-txt'); if(el) el.innerText='Driver: '+(selectedDriver||'Not selected'); }
+  else if(currentRole==='director'){
+    const el=document.getElementById('sel-driver-txt');
+    if(el) el.innerText='Driver: '+(selectedDriver||'Not selected');
+    const queueEl=document.getElementById('rd-incident-queue');
+    if(queueEl){
+      const pendingCount = state.stewardIncidents.filter(i=>i.status==='PENDING').length;
+      queueEl.innerText = pendingCount>0 ? `⏳ ${pendingCount} incident(s) awaiting the Stewards Room` : '';
+    }
+  }
   else if(currentRole==='steward'){
-    const pending=state.stewardIncidents.find(i=>i.status==='PENDING');
+    const pending=pendingIncident();
     const div=document.getElementById('steward-active-incident');
+    const guiltyBtn=document.getElementById('steward-guilty-btn');
     if(div){
       if(pending){
-        const voters=Object.keys(pending.votes).join(', ')||'No votes yet';
+        const votes=pending.votes;
+        const voters=Object.keys(votes).join(', ')||'No votes yet';
+        const guiltyCount=Object.values(votes).filter(v=>v==='GUILTY').length;
+        const notGuiltyCount=Object.values(votes).length-guiltyCount;
+        const otherPending = state.stewardIncidents.filter(i=>i.status==='PENDING').length - 1;
         div.innerHTML=`<span class="text-red-500 font-bold uppercase block mb-1 text-xs">INCIDENT UNDER REVIEW</span>
-          <p class="text-xs font-bold text-white">${pending.driverName} - ${pending.penaltyType} Penalty Request</p>
-          <p class="text-[9px] text-neutral-400 mt-1.5">Stewards Who Voted: ${voters}</p>`;
+          <p class="text-xs font-bold text-white">${pending.driverName} - ${pending.penaltyType} Requested</p>
+          <p class="text-[9px] text-neutral-400 mt-1.5">Stewards Who Voted: ${voters}</p>
+          <p class="text-[9px] text-neutral-500 mt-1">${guiltyCount} GUILTY / ${notGuiltyCount} RACING INCIDENT &mdash; ${STEWARD_MAJORITY_NEEDED} vote(s) needed to decide</p>
+          ${votes[currentSubRole] ? `<p class="text-[9px] text-emerald-500 mt-1 font-bold uppercase">Your vote: ${votes[currentSubRole]==='GUILTY'?'GUILTY':'RACING INCIDENT'} (you can change it until a decision is reached)</p>` : ''}
+          ${otherPending>0 ? `<p class="text-[9px] text-amber-500 mt-1">⏳ ${otherPending} more incident(s) waiting in queue</p>` : ''}`;
       } else {
         div.innerHTML=`<span class="text-neutral-500 text-xs font-bold uppercase">No Active Incident Under Review.</span>`;
       }
+    }
+    if(guiltyBtn){
+      guiltyBtn.innerText = pending && pending.penaltyKind==='DSQ' ? 'GUILTY / DISQUALIFY'
+        : pending && pending.penaltyKind==='REPRIMAND' ? 'GUILTY / REPRIMAND'
+        : 'GUILTY / APPROVE PENALTY';
     }
   } else if(currentRole==='team_principal'){ renderTPDrivers(); }
 }
@@ -1300,7 +1449,12 @@ function simulationTick(){
     if(d.isDSQ || d.status.startsWith('DNF') || d.status==='PIT') return;
 
     const tireData = TIRE_DATA[d.tire] || TIRE_DATA.M;
-    d.tyreWear = Math.min(100, (d.tyreWear||0) + tireData.wearRate);
+    // Wear increment per tick is derived from this driver's individual tire
+    // life (in laps), so a tire reaches 100% wear right around the end of
+    // its assigned life span instead of using one flat rate for everyone.
+    if(!d.tireLifeLaps) d.tireLifeLaps = randomTireLife(d.tire);
+    const wearIncrement = 100 / (d.tireLifeLaps * TICKS_PER_LAP);
+    d.tyreWear = Math.min(100, (d.tyreWear||0) + wearIncrement);
 
     let localScale = speedScale;
     if(f==='YELLOW' && state.yellowSector){
@@ -1310,7 +1464,11 @@ function simulationTick(){
 
     const curve = curvatureAt(d.progress);              
     const jitter = noOvertakeZone ? 1 : (0.9 + Math.random()*0.2); 
-    const increment = UNIT * curve * d.skill * jitter * localScale * tireData.speedMult;
+    // As the tire wears out, the car loses pace: up to a 30% speed penalty
+    // once wear reaches 100%, scaling smoothly with the current wear level.
+    const wearPenalty = 1 - (Math.min(100, d.tyreWear||0) / 100) * 0.30;
+
+    const increment = UNIT * curve * d.skill * jitter * localScale * tireData.speedMult * wearPenalty;
 
     d.progress += increment;
     d.totalDistance = (d.totalDistance||0) + increment;
